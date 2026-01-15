@@ -1,0 +1,9 @@
+[package]
+name = "uflow"
+version = "0.1.0"
+edition = "2024"
+description = "workflow"
+license = "Apache-2.0"
+repository = "https://github.com/uporm/uflow"
+
+[dependencies]
