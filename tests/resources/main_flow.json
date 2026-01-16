@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    { "id": "start", "type": "start", "data": {} },
+    {
+      "id": "sub",
+      "type": "subflow",
+      "data": {
+        "workflowId": "user_flow",
+        "inputMapping": {},
+        "outputMapping": {}
+      }
+    },
+    { "id": "end", "type": "end", "data": {} }
+  ],
+  "edges": [
+    { "source": "start", "target": "sub" },
+    { "source": "sub", "target": "end" }
+  ]
+}
