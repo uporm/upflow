@@ -1,13 +1,15 @@
-use std::sync::{Arc, Mutex};
-use uflow::{WorkflowEngine, WorkflowContext, nodes::NodeExecutor};
+use std::sync::Arc;
+use uflow::{WorkflowEngine, WorkflowContext, WorkflowError};
 use serde_json::{json, Value};
 use async_trait::async_trait;
+use uflow::model::NodeOutput;
+use uflow::nodes::node_trait::NodeExecutor;
 
 struct TrapNode;
 
 #[async_trait]
 impl NodeExecutor for TrapNode {
-    async fn execute(&self, _ctx: &WorkflowContext, _data: &Value) -> Result<uflow::nodes::NodeOutput, uflow::error::WorkflowError> {
+    async fn execute(&self, _ctx: &WorkflowContext, _data: &Value) -> Result<NodeOutput, WorkflowError> {
         panic!("TrapNode executed! This path should have been skipped.");
     }
 }
@@ -15,7 +17,7 @@ impl NodeExecutor for TrapNode {
 #[tokio::test]
 async fn test_conditional_join_skip() {
     let engine = WorkflowEngine::global();
-    engine.register("trap", Arc::new(TrapNode));
+    engine.register("trap", TrapNode);
     
     // Flow:
     // Start -> Decision
@@ -28,7 +30,7 @@ async fn test_conditional_join_skip() {
     let flow_json = json!({
         "nodes": [
             { "id": "start", "type": "start", "data": {} },
-            { "id": "decision", "type": "DECISION", "data": {
+            { "id": "decision", "type": "decision", "data": {
                 "cases": [
                     {
                         "id": "path_a",
@@ -46,7 +48,7 @@ async fn test_conditional_join_skip() {
                     }
                 ]
             }},
-            { "id": "node_a", "type": "DECISION", "data": {} }, // Dummy node
+            { "id": "node_a", "type": "decision", "data": {} }, // Dummy node
             { "id": "node_b", "type": "trap", "data": {} },     // Should not execute
             { "id": "end", "type": "end", "data": {} }
         ],

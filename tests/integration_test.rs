@@ -38,7 +38,7 @@ async fn test_simple_flow() {
             },
             {
                 "id": "decision1",
-                "type": "DECISION",
+                "type": "decision",
                 "data": {
                     "cases": [
                         {

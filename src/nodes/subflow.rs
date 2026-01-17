@@ -1,4 +1,3 @@
-use crate::nodes::{NodeExecutor, NodeOutput};
 use crate::context::WorkflowContext;
 use crate::engine::WorkflowEngine;
 use crate::error::WorkflowError;
@@ -6,6 +5,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::model::NodeOutput;
+use crate::nodes::node_trait::NodeExecutor;
 
 pub struct SubflowNode;
 

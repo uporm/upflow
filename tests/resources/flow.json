@@ -30,7 +30,7 @@
     },
     {
       "id": "fN9NQSFc",
-      "type": "DECISION",
+      "type": "decision",
       "data": {
         "title": "条件分支",
         "cases": [

@@ -1,10 +1,11 @@
 use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
 use crate::model::WorkflowDefinition;
-use crate::nodes::{NodeExecutor, start::StartNode, decision::DecisionNode, subflow::SubflowNode, end::EndNode};
+use crate::nodes::{ start::StartNode, decision::DecisionNode, subflow::SubflowNode, end::EndNode};
 use crate::error::WorkflowError;
 use crate::executor::WorkflowRunner;
 use crate::context::WorkflowContext;
+use crate::nodes::node_trait::NodeExecutor;
 
 pub struct WorkflowEngine {
     defs: RwLock<HashMap<String, Arc<WorkflowDefinition>>>,
@@ -13,11 +14,11 @@ pub struct WorkflowEngine {
 
 impl WorkflowEngine {
     pub fn global() -> &'static Self {
-        static INSTANCE: once_cell::sync::OnceCell<WorkflowEngine> = once_cell::sync::OnceCell::new();
+        static INSTANCE: std::sync::OnceLock<WorkflowEngine> = std::sync::OnceLock::new();
         INSTANCE.get_or_init(|| {
             let mut execs: HashMap<String, Arc<dyn NodeExecutor>> = HashMap::new();
             execs.insert("start".to_string(), Arc::new(StartNode));
-            execs.insert("DECISION".to_string(), Arc::new(DecisionNode));
+            execs.insert("decision".to_string(), Arc::new(DecisionNode));
             execs.insert("subflow".to_string(), Arc::new(SubflowNode));
             execs.insert("end".to_string(), Arc::new(EndNode));
 
@@ -26,6 +27,10 @@ impl WorkflowEngine {
                 executors: RwLock::new(execs),
             }
         })
+    }
+
+    pub fn register(&self, n_type: &str, exec: impl NodeExecutor + 'static) {
+        self.executors.write().unwrap().insert(n_type.to_string(), Arc::new(exec));
     }
 
     pub fn load(&self, id: &str, json: &str) -> Result<(), WorkflowError> {
@@ -48,9 +53,5 @@ impl WorkflowEngine {
 
     pub fn get_executor(&self, n_type: &str) -> Option<Arc<dyn NodeExecutor>> {
         self.executors.read().unwrap().get(n_type).cloned()
-    }
-
-    pub fn register(&self, n_type: &str, exec: Arc<dyn NodeExecutor>) {
-        self.executors.write().unwrap().insert(n_type.to_string(), exec);
     }
 }

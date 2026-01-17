@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use uflow::{WorkflowEngine, WorkflowContext};
 use serde_json::json;
-use tokio::time::Duration;
 
 #[tokio::test]
 async fn test_parallel_join() {
@@ -22,8 +21,8 @@ async fn test_parallel_join() {
     let flow_json = json!({
         "nodes": [
             { "id": "start", "type": "start", "data": {} },
-            { "id": "node_a", "type": "DECISION", "data": {} }, // Using decision as a dummy pass-through
-            { "id": "node_b", "type": "DECISION", "data": {} },
+            { "id": "node_a", "type": "decision", "data": {} }, // Using decision as a dummy pass-through
+            { "id": "node_b", "type": "decision", "data": {} },
             { "id": "end", "type": "end", "data": {} }
         ],
         "edges": [

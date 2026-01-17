@@ -103,7 +103,7 @@ impl WorkflowRunner {
                                 }
                             }
                             Err(e) => {
-                                tracing::error!("Node execution failed: node_id={}, error={}", node_id, e);
+                                log::error!("Node execution failed: node_id={}, error={}", node_id, e);
                             }
                         }
                     }
