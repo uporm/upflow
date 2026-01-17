@@ -1,63 +1,60 @@
-use crate::model::node_trait::{NodeExecutor, NodeOutput};
-use crate::model::{workflow::Node, context::WorkflowContext};
-use crate::engine::engine::WorkflowEngine;
+use crate::nodes::{NodeExecutor, NodeOutput};
+use crate::context::WorkflowContext;
+use crate::engine::WorkflowEngine;
+use crate::error::WorkflowError;
 use async_trait::async_trait;
-use serde_json::json;
-use anyhow::{Result, anyhow};
-use uuid::Uuid;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct SubflowNode;
 
-impl SubflowNode {}
+const MAX_DEPTH: u32 = 5; // 生产环境建议配置最大嵌套深度
 
 #[async_trait]
 impl NodeExecutor for SubflowNode {
-    async fn execute(&self, node: &Node, parent_ctx: &mut WorkflowContext) -> Result<NodeOutput> {
-        let wf_id = node.data.get("workflowId").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("subflow missing workflowId"))?;
+    async fn execute(&self, ctx: &WorkflowContext, data: &Value) -> Result<NodeOutput, WorkflowError> {
+        let sub_flow_id = data["flowId"].as_str()
+            .ok_or_else(|| WorkflowError::ConfigError("SubflowNode missing 'flowId'".into()))?;
 
-        let wf_registry = parent_ctx.get_wf_registry().ok_or_else(|| anyhow!("engine env missing workflow registry"))?;
-        let node_registry = parent_ctx.get_node_registry().ok_or_else(|| anyhow!("engine env missing node registry"))?;
-        let event_bus = parent_ctx.get_event_bus().ok_or_else(|| anyhow!("engine env missing event bus"))?;
+        // 1. 防死循环检查
+        if ctx.depth >= MAX_DEPTH {
+            return Err(WorkflowError::RuntimeError(format!("Max subflow depth ({}) exceeded", MAX_DEPTH)));
+        }
 
-        let workflow = wf_registry.get(wf_id)
-            .ok_or_else(|| anyhow!("subflow {} not found", wf_id))?;
-
-        // 子上下文
-        let child_ctx = parent_ctx.isolated_clone();
-
-        // 输入映射
-        if let Some(map) = node.data.get("inputMapping").and_then(|v| v.as_object()) {
-            for (child, parent) in map {
-                if let Some(v) = parent_ctx.get_var(parent.as_str().unwrap()) {
-                    child_ctx.set_var(child, v);
+        // 2. 输入映射：从父流程提取数据传给子流程
+        let mut sub_initial_vars = HashMap::new();
+        if let Some(inputs) = data["input"].as_array() {
+            for mapping in inputs {
+                #[allow(clippy::collapsible_if)]
+                if let (Some(name), Some(val_key)) = (mapping["name"].as_str(), mapping["value"].as_str()) {
+                    if let Some(val) = ctx.get_var(val_key) {
+                        sub_initial_vars.insert(name.to_string(), val);
+                    }
                 }
             }
         }
 
-        // 执行子流程
-        let run = WorkflowEngine::builder()
-            .id(Uuid::new_v4().to_string())
-            .flow(workflow)
-            .executors(node_registry.clone())
-            .flows(wf_registry.clone())
-            .event_bus(event_bus.clone())
-            .build();
+        // 3. 执行子流程
+        // 我们利用单例引擎运行子流程，传递当前的深度 + 1
+        println!("[Subflow] Triggering {} from parent run {}", sub_flow_id, ctx.run_id);
 
-        let child_ctx = run.start_with_ctx(child_ctx).await?;
-
-        // 输出映射
-        if let Some(map) = node.data.get("outputMapping").and_then(|v| v.as_object()) {
-            for (parent, child) in map {
-                if let Some(v) = child_ctx.get_var(child.as_str().unwrap()) {
-                    parent_ctx.set_var(parent, v);
-                }
-            }
+        // 注意：这里需要引擎暴露一个 run_internal 或者类似方法，支持自定义 Context 初始化
+        let sub_ctx = Arc::new(WorkflowContext::new(ctx.depth + 1));
+        for (k, v) in sub_initial_vars {
+            sub_ctx.set_var(k, v);
         }
+
+        // 获取子流程定义并运行
+        WorkflowEngine::global().run_with_context(sub_flow_id, sub_ctx.clone()).await?;
+
+        // 4. 输出映射：从子流程结果写回父流程
+        let result_vars = HashMap::new();
+        // 此处逻辑根据业务需求，将 sub_ctx 中的变量映射回 NodeOutput
 
         Ok(NodeOutput {
-            output: json!({"subflow": "ok"}),
-            matched_handles: None,
+            next_handle: None,
+            updated_vars: result_vars,
         })
     }
 }

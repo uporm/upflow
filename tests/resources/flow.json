@@ -1,0 +1,146 @@
+{
+  "nodes": [
+    {
+      "id": "8zIuLkJV",
+      "type": "start",
+      "data": {
+        "title": "开始",
+        "input": [
+          {
+            "id": "ZhaIeUdw",
+            "name": "name",
+            "type": "STRING",
+            "rules": [
+              { "type": "required", "message": "此字段为必填项" },
+              { "type": "length", "value": "1,100", "message": "长度必须在 1 到 100 之间" }
+            ]
+          },
+          {
+            "id": "E1ufhn1I",
+            "name": "sex",
+            "type": "INTEGER",
+            "rules": [
+              { "type": "required", "message": "此字段为必填项" },
+              { "type": "min", "value": "150", "message": "数值不能小于 150" },
+              { "type": "max", "value": "200", "message": "数值不能大于 200" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "fN9NQSFc",
+      "type": "DECISION",
+      "data": {
+        "title": "条件分支",
+        "cases": [
+          {
+            "id": "pVGuyuDE",
+            "opr": "and",
+            "conditions": [
+              { "varId": "ZhaIeUdw", "opr": "in", "value": "张三" }
+            ]
+          },
+          {
+            "id": "zBkBpTa6",
+            "opr": "and",
+            "conditions": [
+              { "varId": "ZhaIeUdw", "opr": "in", "value": "李四" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "eeeUjZ5x",
+      "type": "loop",
+      "data": {
+        "title": "循环"
+      }
+    },
+    {
+      "id": "VJ6Y7Oyf",
+      "type": "assign",
+      "data": {
+        "title": "变量赋值",
+        "description": "啊啊"
+      }
+    },
+    {
+      "id": "hPGnoPbR",
+      "type": "end",
+      "data": {
+        "title": "结束",
+        "output": {
+          "type": "vars",
+          "vars": []
+        }
+      }
+    },
+    {
+      "id": "I77Xph7M",
+      "type": "sql-transaction",
+      "data": {
+        "title": "SQL事务"
+      }
+    },
+    {
+      "id": "ri0o1u08",
+      "type": "sql",
+      "data": {
+        "title": "SQL脚本",
+        "content": "select * from user",
+        "input": [
+          { "name": "那么" }
+        ],
+        "output": [
+          { "id": "rows", "name": "rows", "type": "ARRAY_OBJECT" },
+          { "id": "rowNum", "name": "rowNum", "type": "INTEGER" }
+        ]
+      }
+    },
+    {
+      "id": "f9Xa30tt",
+      "type": "subflow",
+      "data": {
+        "title": "子流程",
+        "flowId":"e3223"
+      }
+    },
+    {
+      "id": "m02LdgRr",
+      "type": "code",
+      "data": {
+        "title": "代码执行",
+        "language": "javascript",
+        "input": [
+          { "name": "name", "value": "ZhaIeUdw" }
+        ],
+        "content": "console.log(\"me script\")"
+      }
+    },
+    {
+      "id": "4nvzBRfm",
+      "type": "end",
+      "data": {
+        "title": "结束",
+        "output": {
+          "type": "vars",
+          "vars": []
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "source": "8zIuLkJV", "target": "fN9NQSFc" },
+    { "source": "fN9NQSFc", "sourceHandle": "pVGuyuDE", "target": "eeeUjZ5x" },
+    { "source": "fN9NQSFc", "sourceHandle": "zBkBpTa6", "target": "I77Xph7M" },
+    { "source": "fN9NQSFc", "target": "f9Xa30tt" },
+    { "source": "eeeUjZ5x", "target": "VJ6Y7Oyf" },
+    { "source": "VJ6Y7Oyf", "target": "hPGnoPbR" },
+    { "source": "eeeUjZ5x", "target": "4nvzBRfm" },
+    { "source": "I77Xph7M", "target": "4nvzBRfm" },
+    { "source": "f9Xa30tt", "target": "m02LdgRr" },
+    { "source": "m02LdgRr", "target": "4nvzBRfm" }
+  ]
+}

@@ -1,13 +1,18 @@
-use crate::model::{node_trait::{NodeExecutor, NodeOutput}, workflow::Node, context::WorkflowContext};
-use anyhow::Result;
+use crate::nodes::{NodeExecutor, NodeOutput};
+use crate::context::WorkflowContext;
+use crate::error::WorkflowError;
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::Value;
+use std::collections::HashMap;
 
 pub struct EndNode;
 
 #[async_trait]
 impl NodeExecutor for EndNode {
-    async fn execute(&self, _node: &Node, _ctx: &mut WorkflowContext) -> Result<NodeOutput> {
-        Ok(NodeOutput { output: json!({"end": "ok"}), matched_handles: None })
+    async fn execute(&self, _ctx: &WorkflowContext, _data: &Value) -> Result<NodeOutput, WorkflowError> {
+        Ok(NodeOutput {
+            next_handle: None,
+            updated_vars: HashMap::new(),
+        })
     }
 }
