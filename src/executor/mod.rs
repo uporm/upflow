@@ -1,8 +1,8 @@
-use crate::model::WorkflowDefinition;
 use crate::context::WorkflowContext;
 use crate::engine::WorkflowEngine;
 use crate::error::WorkflowError;
-use std::collections::{HashMap, HashSet};
+use crate::model::{Edge, Node, WorkflowDefinition};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
@@ -10,8 +10,16 @@ pub struct WorkflowRunner {
     definition: Arc<WorkflowDefinition>,
 }
 
+#[derive(Debug)]
 enum EngineMessage {
-    RunNode(String, mpsc::Sender<EngineMessage>),
+    /// NodeID, IsActive, Sender
+    RunNode(String, bool, mpsc::Sender<EngineMessage>),
+}
+
+#[derive(Debug)]
+struct NodeState {
+    in_degree: i32,
+    is_active: bool,
 }
 
 impl WorkflowRunner {
@@ -20,111 +28,133 @@ impl WorkflowRunner {
     }
 
     pub async fn run(&self, ctx: Arc<WorkflowContext>) -> Result<(), WorkflowError> {
-        // 0. 校验所有节点类型是否有对应的 Executor
-        let engine = WorkflowEngine::global();
+        // 1. 预处理：构建查找表和邻接表
+        // 优化：使用 HashMap 替代 Vec 遍历查找 (O(1) vs O(N))
+        let node_map: Arc<HashMap<String, Node>> = Arc::new(
+            self.definition
+                .nodes
+                .iter()
+                .map(|n| (n.id.clone(), n.clone()))
+                .collect(),
+        );
+
+        let mut adjacency: HashMap<String, Vec<Edge>> = HashMap::new();
+        let mut node_states: HashMap<String, NodeState> = HashMap::new();
+
+        // 初始化状态
         for node in &self.definition.nodes {
-            if engine.get_executor(&node.node_type).is_none() {
-                return Err(WorkflowError::RuntimeError(format!("Unknown node type: {}", node.node_type)));
-            }
+            node_states.insert(
+                node.id.clone(),
+                NodeState {
+                    in_degree: 0,
+                    is_active: false,
+                },
+            );
         }
 
-        let mut in_degree = HashMap::new();
-        let mut adjacency = HashMap::new();
-
-        // 1. 初始化 DAG
-        for node in &self.definition.nodes {
-            in_degree.insert(node.id.clone(), 0);
-        }
+        // 构建 DAG 关系
         for edge in &self.definition.edges {
-            *in_degree.entry(edge.target.clone()).or_insert(0) += 1;
-            adjacency.entry(edge.source.clone()).or_insert(vec![]).push(edge.clone());
+            if let Some(state) = node_states.get_mut(&edge.target) {
+                state.in_degree += 1;
+            }
+            adjacency
+                .entry(edge.source.clone())
+                .or_default()
+                .push(edge.clone());
         }
 
-        let in_degree = Arc::new(Mutex::new(in_degree));
-        let active_nodes = Arc::new(Mutex::new(HashSet::new()));
-        let (tx, mut rx) = mpsc::channel::<EngineMessage>(100);
+        // 优化：合并 in_degree 和 active_nodes 为单一状态锁，减少锁竞争
+        let state_lock = Arc::new(Mutex::new(node_states));
+        let adjacency = Arc::new(adjacency);
+        let (tx, mut rx) = mpsc::channel(100);
 
-        // 2. 启动入口节点
+        // 2. 启动入口节点 (入度为 0)
         {
-            let degree = in_degree.lock().await;
-            let mut active = active_nodes.lock().await;
-            for (id, &d) in degree.iter() {
-                if d == 0 { 
-                    active.insert(id.clone());
-                    tx.send(EngineMessage::RunNode(id.clone(), tx.clone())).await.unwrap(); 
+            let mut states = state_lock.lock().await;
+            for (id, state) in states.iter_mut() {
+                if state.in_degree == 0 {
+                    // 入口节点默认激活
+                    state.is_active = true;
+                    tx.send(EngineMessage::RunNode(id.clone(), true, tx.clone()))
+                        .await
+                        .map_err(|e| WorkflowError::RuntimeError(e.to_string()))?;
                 }
             }
         }
-        
-        // 显式 drop tx，这样当所有任务完成后 rx 会关闭
+
+        // 显式 drop tx，这样当所有子任务完成后 rx 会自动关闭
         drop(tx);
 
         // 3. 调度循环
-        while let Some(EngineMessage::RunNode(node_id, tx)) = rx.recv().await {
-            let node_cfg = self.definition.nodes.iter().find(|n| n.id == node_id).cloned().unwrap();
-
-            let in_degree_clone = in_degree.clone();
-            let active_nodes_clone = active_nodes.clone();
-            let ctx_clone = ctx.clone();
-            let edges = adjacency.get(&node_id).cloned().unwrap_or_default();
+        while let Some(EngineMessage::RunNode(node_id, is_active, tx)) = rx.recv().await {
+            let node = node_map.get(&node_id).cloned().unwrap();
+            let state_lock = state_lock.clone();
+            let adjacency = adjacency.clone();
+            let ctx = ctx.clone();
 
             tokio::spawn(async move {
-                let engine = WorkflowEngine::global();
-                
-                // 检查节点是否激活
-                let is_active = {
-                    let active = active_nodes_clone.lock().await;
-                    active.contains(&node_id)
-                };
-
-                if is_active {
-                    if let Some(executor) = engine.get_executor(&node_cfg.node_type) {
-                        let result = executor.execute(&ctx_clone, &node_cfg.data).await;
-
-                        let mut degree_lock = in_degree_clone.lock().await;
-                        match result {
-                            Ok(output) => {
-                                for edge in edges {
-                                    // 检查 handle 匹配
-                                    let mut match_handle = true;
-                                    if let Some(ref h) = edge.source_handle {
-                                        if Some(h) != output.next_handle.as_ref() {
-                                            match_handle = false;
-                                        }
-                                    }
-                                    
-                                    if match_handle {
-                                        // 激活目标节点
-                                        let mut active = active_nodes_clone.lock().await;
-                                        active.insert(edge.target.clone());
-                                    }
-                                    
-                                    Self::decrement_degree(&edge.target, &mut degree_lock, &tx).await;
-                                }
-                            }
+                // 优化：将是否执行业务逻辑的判断前置
+                // 只有当 is_active 为 true 时才真正执行 executor
+                let output_handle = if is_active {
+                    let engine = WorkflowEngine::global();
+                    if let Some(executor) = engine.get_executor(&node.node_type) {
+                        match executor.execute(&ctx, &node.data).await {
+                            Ok(output) => output.next_handle,
                             Err(e) => {
-                                log::error!("Node execution failed: node_id={}, error={}", node_id, e);
+                                log::error!(
+                                    "Node execution failed: node_id={}, error={}",
+                                    node_id,
+                                    e
+                                );
+                                None
                             }
                         }
+                    } else {
+                        None
                     }
                 } else {
-                    // 节点未激活（被跳过），传播跳过状态
-                    let mut degree_lock = in_degree_clone.lock().await;
+                    // 节点未激活（被跳过），不产生输出 handle
+                    None
+                };
+
+                // 4. 传播状态到子节点
+                if let Some(edges) = adjacency.get(&node_id) {
+                    let mut states = state_lock.lock().await;
+
                     for edge in edges {
-                        Self::decrement_degree(&edge.target, &mut degree_lock, &tx).await;
+                        if let Some(child_state) = states.get_mut(&edge.target) {
+                            // 只有当当前节点激活且执行成功，才尝试激活子节点
+                            if is_active {
+                                // 检查 Handle 匹配逻辑
+                                let condition_met = match &edge.source_handle {
+                                    None => true, // 无特定 Handle 要求，默认流转
+                                    Some(h) => Some(h) == output_handle.as_ref(),
+                                };
+
+                                if condition_met {
+                                    child_state.is_active = true;
+                                }
+                            }
+
+                            // 无论是否激活，入度都减一
+                            child_state.in_degree -= 1;
+
+                            // 当入度为 0 时，调度子节点
+                            if child_state.in_degree == 0 {
+                                let _ = tx
+                                    .send(EngineMessage::RunNode(
+                                        edge.target.clone(),
+                                        child_state.is_active,
+                                        tx.clone(),
+                                    ))
+                                    .await;
+                            }
+                        }
                     }
                 }
             });
         }
-        Ok(())
-    }
 
-    async fn decrement_degree(target: &str, degree_map: &mut HashMap<String, i32>, tx: &mpsc::Sender<EngineMessage>) {
-        if let Some(d) = degree_map.get_mut(target) {
-            *d -= 1;
-            if *d == 0 { 
-                tx.send(EngineMessage::RunNode(target.to_string(), tx.clone())).await.unwrap(); 
-            }
-        }
+        Ok(())
     }
 }

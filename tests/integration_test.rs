@@ -10,10 +10,9 @@ async fn test_unknown_node() {
     
     // 加载
     let engine = WorkflowEngine::global();
-    engine.load("test_flow", &content).expect("Failed to load flow");
+    let result = engine.load("test_flow", &content);
     
-    // 运行，期望失败，因为包含 loop, assign 等未知节点
-    let result = engine.run("test_flow").await;
+    // 期望加载失败，因为包含 loop, assign 等未知节点
     assert!(result.is_err());
     
     if let Err(e) = result {

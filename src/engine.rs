@@ -35,6 +35,14 @@ impl WorkflowEngine {
 
     pub fn load(&self, id: &str, json: &str) -> Result<(), WorkflowError> {
         let def: WorkflowDefinition = serde_json::from_str(json)?;
+        
+        // 校验节点类型
+        for node in &def.nodes {
+            if self.get_executor(&node.node_type).is_none() {
+                return Err(WorkflowError::RuntimeError(format!("Unknown node type: {}", node.node_type)));
+            }
+        }
+
         self.defs.write().unwrap().insert(id.to_string(), Arc::new(def));
         Ok(())
     }
