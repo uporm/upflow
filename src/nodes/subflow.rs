@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+use crate::context::FlowContext;
 use crate::engine::WorkflowEngine;
-use crate::model::WorkflowError;
+use crate::model::error::WorkflowError;
 use crate::nodes::executor::{NodeContext, NodeExecutor};
 
 pub struct SubflowNode;
@@ -23,8 +24,10 @@ impl NodeExecutor for SubflowNode {
             }
         }
         let input = Value::Object(input_map);
+        let sys_vars = (*ctx.flow_context.sys_vars).clone();
+        let flow_context = FlowContext::new().with_payload(input).with_sys_vars(sys_vars);
         let result = WorkflowEngine::global()
-            .run_with_input(flow_id, ctx.event_bus.clone(), input)
+            .run_with_ctx_event(flow_id, flow_context, ctx.event_bus.clone())
             .await?;
         Ok(result.output.unwrap_or(Value::Null))
     }

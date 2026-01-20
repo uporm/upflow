@@ -1,6 +1,5 @@
 use tokio::sync::broadcast;
-
-use crate::model::WorkflowEvent;
+use crate::model::event::WorkflowEvent;
 
 #[derive(Clone)]
 pub struct EventBus {

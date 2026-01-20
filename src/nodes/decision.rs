@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
-
-use crate::model::WorkflowError;
+use crate::model::error::WorkflowError;
 use crate::nodes::executor::{NodeContext, NodeExecutor};
 
 pub struct DecisionNode;

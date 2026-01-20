@@ -1,26 +1,30 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+use crate::model::error::WorkflowError;
 use dashmap::DashMap;
 use regex::Regex;
-use serde_json::{json, Value};
-
-use crate::model::WorkflowError;
+use serde_json::{Value, json};
 
 #[derive(Clone)]
 pub struct FlowContext {
-    pub input: Value,
+    pub payload: Value,
     pub data: Arc<DashMap<String, Value>>,
     pub sys_vars: Arc<HashMap<String, Value>>,
 }
 
 impl FlowContext {
-    pub fn new(input: Value) -> Self {
+    pub fn new() -> Self {
         Self {
-            input,
+            payload: Value::Null,
             data: Arc::new(DashMap::new()),
             sys_vars: Arc::new(HashMap::new()),
         }
+    }
+
+    pub fn with_payload(mut self, payload: Value) -> Self {
+        self.payload = payload;
+        self
     }
 
     pub fn with_sys_vars(mut self, sys_vars: HashMap<String, Value>) -> Self {
@@ -104,7 +108,7 @@ impl FlowContext {
         }
         if head == "input" {
             let tail = parts.get(0).copied().unwrap_or("");
-            return Ok(self.extract_path(&self.input, tail));
+            return Ok(self.extract_path(&self.payload, tail));
         }
         let base = self.get_output(head).unwrap_or(Value::Null);
         let tail = parts.get(0).copied().unwrap_or("");
@@ -147,7 +151,7 @@ impl FlowContext {
 fn placeholder_regex() -> Result<&'static Regex, WorkflowError> {
     static REGEX: OnceLock<Result<Regex, String>> = OnceLock::new();
     REGEX
-        .get_or_init(|| Regex::new(r"\{\{\s*([^}]+)\s*\}\}").map_err(|e| e.to_string()))
+        .get_or_init(|| Regex::new(r"\{\{\s*([^}]+)\s*}}").map_err(|e| e.to_string()))
         .as_ref()
         .map_err(|e| WorkflowError::RuntimeError(format!("regex error: {}", e)))
 }

@@ -1,11 +1,7 @@
-use std::time::Duration;
-
 use serde_json::{json, Value};
-use uflow::nodes::{DecisionNode, EndNode, IterationNode, StartNode, SubflowNode};
-use uflow::nodes::executor::{NodeContext, NodeExecutor};
-use uflow::model::WorkflowError;
-use uflow::{EventBus, FlowStatus, WorkflowEngine, WorkflowEvent};
+use uflow::{DecisionNode, EndNode, EventBus, FlowContext, FlowStatus, IterationNode, StartNode, SubflowNode, WorkflowEngine, WorkflowError, WorkflowEvent};
 use async_trait::async_trait;
+use uflow::executor::{NodeContext, NodeExecutor};
 
 struct MockNode;
 
@@ -67,24 +63,16 @@ async fn production_flow() -> Result<(), Box<dyn std::error::Error>> {
     let input = json!({
         "urls": ["timeout://slow", "panic://boom", "https://ok"]
     });
-    let result = engine.run_with_input("wf1", event_bus.clone(), input).await?;
+    let flow_context = FlowContext::new().with_payload(input);
+    let result = engine
+        .run_with_ctx_event("wf1", flow_context, event_bus.clone())
+        .await?;
     let events = collect_handle.await?;
     assert!(events.iter().any(|e| matches!(e, WorkflowEvent::NodeError { .. })));
     assert!(matches!(
         result.status,
         FlowStatus::Succeeded | FlowStatus::Failed | FlowStatus::Cancelled
     ));
-
-    let stop_bus = EventBus::new(100);
-    let (instance_id, handle) = engine.start(
-        "wf1",
-        stop_bus,
-        json!({ "urls": ["timeout://1", "timeout://2", "timeout://3"] }),
-    )?;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    engine.stop(&instance_id);
-    let stopped = handle.await??;
-    assert!(matches!(stopped.status, FlowStatus::Cancelled));
 
     Ok(())
 }

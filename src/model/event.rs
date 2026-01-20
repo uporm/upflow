@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use super::FlowStatus;
+use crate::model::workflow::FlowStatus;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WorkflowEvent {

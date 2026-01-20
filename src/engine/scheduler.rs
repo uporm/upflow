@@ -3,20 +3,19 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use futures::FutureExt;
-use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use serde_json::{json, Value};
-use tokio::sync::mpsc;
-use tokio::time::{sleep, timeout, Duration};
+use serde_json::{Value, json};
+use tokio::task::JoinSet;
+use tokio::time::{Duration, sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
 use crate::context::FlowContext;
 use crate::engine::EventBus;
-use crate::graph::GraphStore;
-use crate::model::{
-    Edge, FlowStatus, Node, NodePolicy, OnErrorStrategy, Workflow, WorkflowError, WorkflowEvent,
-    WorkflowResult,
-};
+use crate::engine::graph::GraphStore;
+use crate::model::error::WorkflowError;
+use crate::model::event::WorkflowEvent;
+use crate::model::workflow::{FlowStatus, Node, NodePolicy, OnErrorStrategy, Workflow, WorkflowResult};
 use crate::nodes::executor::{NodeContext, NodeExecutor};
 
 pub struct Scheduler {
@@ -35,8 +34,7 @@ struct NodeRunResult {
 
 /// Manages the execution state of the workflow graph
 struct ExecutionState {
-    graph: DiGraph<Node, Edge>,
-    node_map: HashMap<String, NodeIndex>,
+    store: Arc<GraphStore>,
 
     // Runtime state
     // Number of incoming edges that haven't fired yet for each node
@@ -50,11 +48,9 @@ struct ExecutionState {
 }
 
 impl ExecutionState {
-    fn new(def: &Workflow) -> Result<Self, WorkflowError> {
-        let store = GraphStore::build(def)?;
+    fn new(store: Arc<GraphStore>) -> Self {
         let mut state = Self {
-            graph: store.graph,
-            node_map: store.node_map,
+            store,
             pending_incoming: HashMap::new(),
             active_incoming: HashMap::new(),
             ready_queue: VecDeque::new(),
@@ -62,12 +58,13 @@ impl ExecutionState {
         };
 
         state.init();
-        Ok(state)
+        state
     }
 
     fn init(&mut self) {
-        for idx in self.graph.node_indices() {
+        for idx in self.store.graph.node_indices() {
             let incoming = self
+                .store
                 .graph
                 .neighbors_directed(idx, petgraph::Direction::Incoming)
                 .count();
@@ -79,7 +76,7 @@ impl ExecutionState {
     }
 
     fn get_node(&self, idx: NodeIndex) -> Option<&Node> {
-        self.graph.node_weight(idx)
+        self.store.graph.node_weight(idx)
     }
 
     fn pop_ready(&mut self) -> Option<NodeIndex> {
@@ -87,12 +84,12 @@ impl ExecutionState {
     }
 
     fn node_completed(&mut self, node_id: &str, output: Option<&Value>) {
-        let node_idx = match self.node_map.get(node_id) {
+        let node_idx = match self.store.node_map.get(node_id) {
             Some(&idx) => idx,
             None => return,
         };
 
-        let node_type = self.graph[node_idx].node_type.clone();
+        let node_type = self.store.graph[node_idx].node_type.clone();
 
         let selected_handle = if node_type == "decision" {
             output
@@ -104,7 +101,7 @@ impl ExecutionState {
 
         // Collect edges first to avoid borrowing issues
         let mut edges = Vec::new();
-        for edge in self.graph.edges(node_idx) {
+        for edge in self.store.graph.edges(node_idx) {
             edges.push((edge.target(), edge.weight().source_handle.clone()));
         }
 
@@ -146,7 +143,7 @@ impl ExecutionState {
 
     fn skip_node(&mut self, node: NodeIndex) {
         if self.skipped_nodes.insert(node) {
-            let targets: Vec<NodeIndex> = self.graph.neighbors(node).collect();
+            let targets: Vec<NodeIndex> = self.store.graph.neighbors(node).collect();
             for target in targets {
                 self.propagate_edge(target, false);
             }
@@ -154,7 +151,7 @@ impl ExecutionState {
     }
 
     fn trigger_fallback(&mut self, fallback_node_id: &str) {
-        if let Some(&idx) = self.node_map.get(fallback_node_id) {
+        if let Some(&idx) = self.store.node_map.get(fallback_node_id) {
             // Force reset state for fallback node to ensure it runs
             // Note: This assumes fallback node is part of the graph but we want to manually trigger it
             // potentially ignoring its original dependencies or if it was skipped.
@@ -166,8 +163,8 @@ impl ExecutionState {
     }
 
     fn get_end_output(&self, ctx: &FlowContext) -> Option<Value> {
-        self.graph.node_indices().find_map(|idx| {
-            let node = &self.graph[idx];
+        self.store.graph.node_indices().find_map(|idx| {
+            let node = &self.store.graph[idx];
             if node.node_type == "end" {
                 ctx.get_output(&node.id)
             } else {
@@ -178,16 +175,29 @@ impl ExecutionState {
 }
 
 impl Scheduler {
+    pub fn get_executor(
+        &self,
+        node_type: &str,
+    ) -> Result<Arc<dyn NodeExecutor>, WorkflowError> {
+        let registry = self.registry.read().unwrap();
+        registry
+            .get(node_type)
+            .cloned()
+            .ok_or_else(|| WorkflowError::NodeExecutorNotFound(node_type.to_string()))
+    }
+
     pub async fn execute(
         &self,
         def: Arc<Workflow>,
+        graph: Arc<GraphStore>,
         event_bus: EventBus,
-        input: Value,
+        flow_context: FlowContext,
         cancellation: CancellationToken,
         instance_id: String,
     ) -> Result<WorkflowResult, WorkflowError> {
-        let mut state = ExecutionState::new(&def)?;
-        let ctx = FlowContext::new(input.clone());
+        let mut state = ExecutionState::new(graph);
+        let input = flow_context.payload.clone();
+        let ctx = flow_context;
 
         event_bus.emit(WorkflowEvent::FlowStarted {
             id: def.id.clone(),
@@ -195,76 +205,84 @@ impl Scheduler {
             timestamp: chrono::Utc::now(),
         });
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<NodeRunResult>();
-        let mut running = 0usize;
+        let mut running = JoinSet::new();
         let mut has_error = false;
 
-        loop {
+        'main: loop {
             if cancellation.is_cancelled() {
+                running.abort_all();
                 break;
             }
             while let Some(idx) = state.pop_ready() {
                 let node = state.get_node(idx).cloned().unwrap();
                 let policy = NodePolicy::from_value(&node.data);
-                
-                let registry = self.registry.read().unwrap();
-                let executor = registry
-                    .get(&node.node_type)
-                    .cloned()
-                    .ok_or_else(|| WorkflowError::NodeExecutorNotFound(node.node_type.clone()))?;
-                drop(registry);
+
+                let executor = self.get_executor(&node.node_type)?;
 
                 let event_bus = event_bus.clone();
-                let tx = tx.clone();
                 let ctx = ctx.clone();
                 let cancellation = cancellation.clone();
 
-                tokio::spawn(async move {
-                    let result = run_node(node, executor, policy, ctx, event_bus, cancellation).await;
-                    let _ = tx.send(result);
+                running.spawn(async move {
+                    run_node(node, executor, policy, ctx, event_bus, cancellation).await
                 });
-                running += 1;
             }
 
-            if running == 0 {
+            if running.is_empty() {
                 break;
             }
 
-            if let Some(res) = rx.recv().await {
-                running = running.saturating_sub(1);
-                
-                match &res.error {
-                    None => {
-                        if let Some(output) = &res.output {
-                            ctx.set_output(&res.node_id, output.clone());
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    running.abort_all();
+                    break;
+                }
+                res = running.join_next() => {
+                    let Some(res) = res else {
+                        break 'main;
+                    };
+                    let res = match res {
+                        Ok(res) => res,
+                        Err(_) => {
+                            cancellation.cancel();
+                            running.abort_all();
+                            has_error = true;
+                            break 'main;
                         }
-                        state.node_completed(&res.node_id, res.output.as_ref());
-                    }
-                    Some(_) => {
-                        if let Some(output) = &res.output {
-                            ctx.set_output(&res.node_id, output.clone());
-                        }
-                        
-                        match res.strategy {
-                            OnErrorStrategy::FailFast => {
-                                cancellation.cancel();
-                                has_error = true;
+                    };
+
+                    match &res.error {
+                        None => {
+                            if let Some(output) = &res.output {
+                                ctx.set_output(&res.node_id, output.clone());
                             }
-                            OnErrorStrategy::Fallback => {
-                                has_error = false;
-                                if let Some(fallback) = &res.fallback_node_id {
-                                    state.trigger_fallback(fallback);
+                            state.node_completed(&res.node_id, res.output.as_ref());
+                        }
+                        Some(_) => {
+                            if let Some(output) = &res.output {
+                                ctx.set_output(&res.node_id, output.clone());
+                            }
+
+                            match res.strategy {
+                                OnErrorStrategy::FailFast => {
+                                    cancellation.cancel();
+                                    has_error = true;
                                 }
-                            }
-                            OnErrorStrategy::Continue => {
-                                has_error = false;
-                                // Treat as completed (possibly with error output)
-                                state.node_completed(&res.node_id, res.output.as_ref());
+                                OnErrorStrategy::Fallback => {
+                                    has_error = false;
+                                    if let Some(fallback) = &res.fallback_node_id {
+                                        state.trigger_fallback(fallback);
+                                    }
+                                }
+                                OnErrorStrategy::Continue => {
+                                    has_error = false;
+                                    state.node_completed(&res.node_id, res.output.as_ref());
+                                }
                             }
                         }
                     }
                 }
-            }
+            };
         }
 
         let status = if cancellation.is_cancelled() {

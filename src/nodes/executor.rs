@@ -3,7 +3,9 @@ use serde_json::Value;
 
 use crate::context::FlowContext;
 use crate::engine::EventBus;
-use crate::model::{Node, WorkflowError, WorkflowEvent};
+use crate::model::error::WorkflowError;
+use crate::model::event::WorkflowEvent;
+use crate::model::workflow::Node;
 
 pub struct NodeContext {
     pub node: Node,
@@ -25,4 +27,7 @@ impl NodeContext {
 #[async_trait]
 pub trait NodeExecutor: Send + Sync {
     async fn execute(&self, ctx: NodeContext) -> Result<Value, WorkflowError>;
+    fn validate(&self, _data: &Value) -> Result<(), WorkflowError> {
+        Ok(())
+    }
 }
