@@ -1,0 +1,71 @@
+{
+  "id": "flow_robust_v1",
+  "nodes": [
+    {
+      "id": "node_start",
+      "type": "start",
+      "data": { "inputs": [{ "var": "urls", "type": "array<string>" }] }
+    },
+    {
+      "id": "node_process_urls",
+      "type": "iteration",
+      "data": {
+        "iterator_selector": "{{node_start.urls}}",
+        "config": { "concurrency": 3 },
+        "children": [
+          {
+            "id": "http_scrape",
+            "type": "http_request",
+            "data": {
+              "url": "{{sys.item}}",
+              "config": {
+                "timeout_ms": 2000,
+                "retry": { "max_attempts": 3, "interval_ms": 500 },
+                "on_error": "continue"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "node_risk_check",
+      "type": "decision",
+      "data": {
+        "conditions": [
+          {
+            "id": "high_risk",
+            "rules": [
+              {
+                "variable": "{{node_process_urls.failed_count}}",
+                "operator": ">",
+                "value": 0
+              }
+            ]
+          },
+          { "id": "pass" }
+        ]
+      }
+    },
+    {
+      "id": "node_alert",
+      "type": "http_request",
+      "data": {
+        "url": "https://hooks.slack.com/...",
+        "config": { "on_error": "fail_fast" }
+      }
+    },
+    { "id": "node_end", "type": "end", "data": {} }
+  ],
+  "edges": [
+    { "source": "node_start", "target": "node_process_urls" },
+    { "source": "node_process_urls", "target": "node_risk_check" },
+    {
+      "source": "node_risk_check",
+      "sourceHandle": "high_risk",
+      "target": "node_alert"
+    },
+    { "source": "node_risk_check", "sourceHandle": "pass", "target": "node_end" },
+    { "source": "node_alert", "target": "node_end" }
+  ]
+}
