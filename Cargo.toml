@@ -5,16 +5,14 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1.49.0", features = ["full"] }
-tokio-util = "0.7.18"
 petgraph = "0.8.3"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-dashmap = "6.1.0"
-async-trait = "0.1.89"
-thiserror = "2.0.18"
-chrono = { version = "0.4.43", features = ["serde", "clock"] }
-futures = "0.3.31"
+dashmap = "7.0.0-rc2"
 regex = "1.12.2"
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+sonyflake = "0.4.0"
+serde = { version = "1.0.228", features = ["derive"] }
+chrono = { version = "0.4.43", features = ["serde"] }
+async-trait = "0.1.89"
 sha2 = "0.10.9"
 hex = "0.4.3"
-sonyflake = "0.4.0"

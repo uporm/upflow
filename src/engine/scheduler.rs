@@ -1,433 +1,500 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, RwLock};
-use std::time::Instant;
-
-use futures::FutureExt;
-use petgraph::graph::NodeIndex;
+use crate::engine::graph::WorkflowGraph;
+use crate::models::actor_message::ActorMessage;
+use crate::models::context::{FlowContext, NodeContext};
+use crate::models::error::WorkflowError;
+use crate::models::event::WorkflowEvent;
+use crate::models::event_bus::EventBus;
+use crate::models::workflow::{FlowStatus, WorkflowResult};
+use crate::nodes::NodeExecutor;
+use crate::utils::id::Id;
+use chrono::Utc;
+use dashmap::DashMap;
+use petgraph::Direction;
 use petgraph::visit::EdgeRef;
-use serde_json::{Value, json};
-use tokio::task::JoinSet;
-use tokio::time::{Duration, sleep, timeout};
-use tokio_util::sync::CancellationToken;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
-use crate::context::FlowContext;
-use crate::engine::EventBus;
-use crate::engine::graph::GraphStore;
-use crate::model::error::WorkflowError;
-use crate::model::event::WorkflowEvent;
-use crate::model::workflow::{FlowStatus, Node, NodePolicy, OnErrorStrategy, Workflow, WorkflowResult};
-use crate::nodes::executor::{NodeContext, NodeExecutor};
-
-pub struct Scheduler {
-    pub registry: Arc<RwLock<HashMap<String, Arc<dyn NodeExecutor>>>>,
+/// 工作流调度器
+/// 负责管理节点执行器并调度工作流的执行过程
+pub struct WorkflowScheduler {
+    node_executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
 }
 
-struct NodeRunResult {
-    node_id: String,
-    #[allow(dead_code)]
-    node_type: String,
-    output: Option<Value>,
-    error: Option<WorkflowError>,
-    strategy: OnErrorStrategy,
-    fallback_node_id: Option<String>,
+impl WorkflowScheduler {
+    /// 创建一个新的调度器实例
+    pub fn new() -> Self {
+        Self {
+            node_executors: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// 注册节点类型的执行器
+    ///
+    /// # 参数
+    /// - `node_type`: 节点类型标识
+    /// - `executor`: 具体的执行逻辑实现
+    pub fn register(&self, node_type: &str, executor: impl NodeExecutor + 'static) {
+        self.node_executors
+            .insert(node_type.to_string(), Arc::new(executor));
+    }
+
+    /// 执行工作流
+    ///
+    /// # 参数
+    /// - `flow_context`: 流程上下文，包含输入和变量
+    /// - `event_bus`: 事件总线，用于发送工作流事件
+    /// - `workflow_graph`: 工作流图结构
+    pub async fn execute(
+        &self,
+        flow_context: FlowContext,
+        event_bus: EventBus,
+        workflow_graph: Arc<WorkflowGraph>,
+    ) -> Result<WorkflowResult, WorkflowError> {
+        // 使用无界通道避免死锁，符合 Actor 模型常见实践
+        let (tx, rx) = mpsc::unbounded_channel::<ActorMessage>();
+
+        let mut actor = WorkflowActor::new(
+            workflow_graph,
+            self.node_executors.clone(),
+            flow_context,
+            event_bus,
+            tx,
+        );
+
+        actor.run(rx).await
+    }
 }
 
-/// Manages the execution state of the workflow graph
-struct ExecutionState {
-    store: Arc<GraphStore>,
-
-    // Runtime state
-    // Number of incoming edges that haven't fired yet for each node
-    pending_incoming: HashMap<NodeIndex, usize>,
-
-    // Number of incoming edges that fired with an "active" signal
-    active_incoming: HashMap<NodeIndex, usize>,
-
-    ready_queue: VecDeque<NodeIndex>,
-    skipped_nodes: HashSet<NodeIndex>,
+/// 工作流 Actor
+/// 封装了工作流运行时的状态和消息处理逻辑
+struct WorkflowActor {
+    graph: Arc<WorkflowGraph>,
+    executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
+    flow_context: FlowContext,
+    event_bus: EventBus,
+    tx: mpsc::UnboundedSender<ActorMessage>,
+    remaining_dependencies: HashMap<String, usize>,
+    pending_count: usize,
+    active_incoming: HashMap<String, usize>,
+    instance_id: u64,
 }
 
-impl ExecutionState {
-    fn new(store: Arc<GraphStore>) -> Self {
-        let mut state = Self {
-            store,
-            pending_incoming: HashMap::new(),
+impl WorkflowActor {
+    fn new(
+        graph: Arc<WorkflowGraph>,
+        executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
+        flow_context: FlowContext,
+        event_bus: EventBus,
+        tx: mpsc::UnboundedSender<ActorMessage>,
+    ) -> Self {
+        Self {
+            graph,
+            executors,
+            flow_context,
+            event_bus,
+            tx,
+            remaining_dependencies: HashMap::new(),
+            pending_count: 0,
             active_incoming: HashMap::new(),
-            ready_queue: VecDeque::new(),
-            skipped_nodes: HashSet::new(),
-        };
-
-        state.init();
-        state
+            instance_id: 0,
+        }
     }
 
-    fn init(&mut self) {
-        for idx in self.store.graph.node_indices() {
-            let incoming = self
-                .store
+    /// 初始化工作流状态
+    /// 
+    /// # 逻辑流程
+    /// 1. 遍历图中的所有节点
+    /// 2. 计算每个节点的入度（上游依赖的数量）
+    /// 3. 将入度为0的节点加入初始节点列表
+    /// 4. 将其他节点的依赖数量记录到remaining_dependencies中
+    /// 
+    /// # 返回值
+    /// - 返回入度为0的节点ID列表（即可以立即执行的节点）
+    fn init_state(&mut self) -> Vec<String> {
+        let mut initial_nodes = Vec::new();
+        // 遍历工作流图中的所有节点
+        for idx in self.graph.dag.node_indices() {
+            let node = &self.graph.dag[idx];
+            // 计算当前节点的入度（上游依赖数量）
+            let incoming_count = self
                 .graph
-                .neighbors_directed(idx, petgraph::Direction::Incoming)
+                .dag
+                .edges_directed(idx, Direction::Incoming)
                 .count();
-            self.pending_incoming.insert(idx, incoming);
-            if incoming == 0 {
-                self.ready_queue.push_back(idx);
-            }
-        }
-    }
 
-    fn get_node(&self, idx: NodeIndex) -> Option<&Node> {
-        self.store.graph.node_weight(idx)
-    }
-
-    fn pop_ready(&mut self) -> Option<NodeIndex> {
-        self.ready_queue.pop_front()
-    }
-
-    fn node_completed(&mut self, node_id: &str, output: Option<&Value>) {
-        let node_idx = match self.store.node_map.get(node_id) {
-            Some(&idx) => idx,
-            None => return,
-        };
-
-        let node_type = self.store.graph[node_idx].node_type.clone();
-
-        let selected_handle = if node_type == "decision" {
-            output
-                .and_then(|v| v.get("selected"))
-                .and_then(|v| v.as_str())
-        } else {
-            None
-        };
-
-        // Collect edges first to avoid borrowing issues
-        let mut edges = Vec::new();
-        for edge in self.store.graph.edges(node_idx) {
-            edges.push((edge.target(), edge.weight().source_handle.clone()));
-        }
-
-        for (target, handle) in edges {
-            let is_active = if node_type == "decision" {
-                match (selected_handle, &handle) {
-                    (Some(sel), Some(h)) => sel == h,
-                    (None, Some(_)) => false, // Edge requires handle, but none selected
-                    (_, None) => true,        // Edge requires no handle (default path)
-                }
-            } else {
-                true
-            };
-
-            self.propagate_edge(target, is_active);
-        }
-    }
-
-    fn propagate_edge(&mut self, target: NodeIndex, is_active: bool) {
-        if let Some(pending) = self.pending_incoming.get_mut(&target) {
-            if *pending > 0 {
-                *pending -= 1;
-            }
-
-            if is_active {
-                *self.active_incoming.entry(target).or_insert(0) += 1;
-            }
-
-            if *pending == 0 {
-                let active_count = self.active_incoming.get(&target).copied().unwrap_or(0);
-                if active_count > 0 && !self.skipped_nodes.contains(&target) {
-                    self.ready_queue.push_back(target);
-                } else {
-                    self.skip_node(target);
+            // 根据入度数量分类处理节点
+            match incoming_count {
+                0 => initial_nodes.push(node.id.clone()), // 入度为0的节点可以立即执行
+                _ => {
+                    // 其他节点需要等待上游依赖完成，记录剩余依赖数量
+                    self.remaining_dependencies
+                        .insert(node.id.clone(), incoming_count);
                 }
             }
         }
+        initial_nodes
     }
 
-    fn skip_node(&mut self, node: NodeIndex) {
-        if self.skipped_nodes.insert(node) {
-            let targets: Vec<NodeIndex> = self.store.graph.neighbors(node).collect();
-            for target in targets {
-                self.propagate_edge(target, false);
-            }
+    /// 执行工作流的主要方法
+    /// 
+    /// # 逻辑流程
+    /// 1. 初始化工作流实例ID和状态
+    /// 2. 发送工作流开始事件
+    /// 3. 获取初始可执行节点列表
+    /// 4. 验证图结构有效性（防止循环依赖或没有起始节点）
+    /// 5. 根据初始节点数量决定是否并发执行
+    /// 6. 向消息队列发送执行消息以启动初始节点
+    /// 7. 处理节点间的消息传递直到所有节点完成
+    /// 8. 收集最终结果并发送工作流结束事件
+    /// 
+    /// # 参数
+    /// - `rx`: 接收来自节点的消息通道
+    /// 
+    /// # 返回值
+    /// - 成功时返回包含结果的 WorkflowResult
+    /// - 失败时返回 WorkflowError
+    async fn run(
+        &mut self,
+        rx: mpsc::UnboundedReceiver<ActorMessage>,
+    ) -> Result<WorkflowResult, WorkflowError> {
+        // 生成唯一的工作流实例 ID
+        self.instance_id = Id::next_id().unwrap_or(0);
+
+        // 发送工作流开始事件，通知监听者工作流已启动
+        self.event_bus.emit(WorkflowEvent::FlowStarted {
+            id: self.instance_id,
+            input: self.flow_context.payload.clone(),
+            timestamp: Utc::now(),
+        });
+
+        // 初始化工作流状态并获取所有入度为0的节点作为起始节点
+        let initial_nodes = self.init_state();
+        
+        // 如果图不为空但没有初始节点，则表示存在循环依赖或缺少起始节点
+        if initial_nodes.is_empty() && self.graph.dag.node_count() > 0 {
+            return Err(WorkflowError::InvalidGraph(
+                "Cycle detected or no start node".to_string(),
+            ));
         }
-    }
 
-    fn trigger_fallback(&mut self, fallback_node_id: &str) {
-        if let Some(&idx) = self.store.node_map.get(fallback_node_id) {
-            // Force reset state for fallback node to ensure it runs
-            // Note: This assumes fallback node is part of the graph but we want to manually trigger it
-            // potentially ignoring its original dependencies or if it was skipped.
-            self.pending_incoming.insert(idx, 0);
-            self.active_incoming.insert(idx, 1);
-            self.skipped_nodes.remove(&idx);
-            self.ready_queue.push_back(idx);
+        // 如果有多个初始节点，则使用并发执行
+        let spawn_initial_nodes = initial_nodes.len() > 1;
+        
+        // 为每个初始节点创建执行消息并将其发送到消息队列
+        for node_id in initial_nodes {
+            self.tx
+                .send(ActorMessage::Execute {
+                    node_id: node_id.clone(),
+                    spawn: spawn_initial_nodes,
+                })
+                .map_err(|e| WorkflowError::RuntimeError(e.to_string()))?;
+            // 增加待处理节点计数
+            self.pending_count += 1;
         }
-    }
 
-    fn get_end_output(&self, ctx: &FlowContext) -> Option<Value> {
-        self.store.graph.node_indices().find_map(|idx| {
-            let node = &self.store.graph[idx];
-            if node.node_type == "end" {
-                ctx.get_output(&node.id)
+        // 处理节点间的消息交互，直到所有节点完成或发生错误
+        if let Err(e) = self.process_messages(rx).await {
+            // 如果处理消息时发生错误，发送失败事件并返回错误
+            self.event_bus.emit(WorkflowEvent::FlowFinished {
+                id: self.instance_id,
+                status: FlowStatus::Failed,
+                output: None,
+            });
+            return Err(e);
+        }
+
+        // 尝试从出度为 0 的节点获取最终输出结果
+        let output = self.graph.dag.node_indices().find_map(|idx| {
+            let node = &self.graph.dag[idx];
+            let is_sink = self
+                .graph
+                .dag
+                .edges_directed(idx, Direction::Outgoing)
+                .next()
+                .is_none();
+            if is_sink {
+                self.flow_context.get_result(&node.id)
             } else {
                 None
             }
+        });
+
+        // 发送工作流完成事件，通知监听者工作流已成功结束
+        self.event_bus.emit(WorkflowEvent::FlowFinished {
+            id: self.instance_id,
+            status: FlowStatus::Succeeded,
+            output: output.clone(),
+        });
+
+        // 返回成功的工作流结果
+        Ok(WorkflowResult {
+            instance_id: self.instance_id,
+            status: FlowStatus::Succeeded,
+            output,
         })
     }
-}
 
-impl Scheduler {
-    pub fn get_executor(
-        &self,
-        node_type: &str,
-    ) -> Result<Arc<dyn NodeExecutor>, WorkflowError> {
-        let registry = self.registry.read().unwrap();
-        registry
-            .get(node_type)
-            .cloned()
-            .ok_or_else(|| WorkflowError::NodeExecutorNotFound(node_type.to_string()))
+    /// 处理节点间的消息传递
+    /// 
+    /// # 逻辑流程
+    /// 1. 循环接收消息直到所有节点完成（pending_count为0）
+    /// 2. 根据消息类型进行相应处理：
+    ///    - Execute: 启动节点执行
+    ///    - NodeCompleted: 节点成功完成，更新上下文并触发下游节点
+    ///    - NodeSkipped: 节点被跳过，直接触发下游节点
+    ///    - NodeFailed: 节点执行失败，立即返回错误
+    /// 
+    /// # 参数
+    /// - `rx`: 接收来自节点的消息通道
+    /// 
+    /// # 返回值
+    /// - 成功时返回 ()
+    /// - 失败时返回 WorkflowError
+    async fn process_messages(
+        &mut self,
+        mut rx: mpsc::UnboundedReceiver<ActorMessage>,
+    ) -> Result<(), WorkflowError> {
+        // 持续处理消息直到没有待处理的节点
+        while self.pending_count > 0 {
+            let msg = match rx.recv().await {
+                Some(msg) => msg,
+                None => break,
+            };
+            match msg {
+                ActorMessage::Execute { node_id, spawn } => {
+                    // 处理执行消息，启动指定节点的执行
+                    spawn_node_execution(
+                        node_id.clone(),
+                        self.graph.clone(),
+                        self.executors.clone(),
+                        self.flow_context.clone(),
+                        self.event_bus.clone(),
+                        self.tx.clone(),
+                        spawn,
+                    )
+                    .await
+                    .map_err(|e| {
+                        WorkflowError::RuntimeError(format!(
+                            "Node {} failed to start: {}",
+                            node_id, e
+                        ))
+                    })?;
+                }
+                ActorMessage::NodeCompleted { node_id, output } => {
+                    // 节点完成执行，减少待处理计数
+                    self.pending_count -= 1;
+                    // 将节点的输出结果存储到流程上下文中
+                    self.flow_context.set_result(&node_id, output.clone());
+                    // 触发下游节点的执行
+                    self.dispatch_downstream(&node_id, Some(&output))?;
+                }
+                ActorMessage::NodeSkipped { node_id } => {
+                    // 节点被跳过执行，减少待处理计数
+                    self.pending_count -= 1;
+                    // 触发下游节点的执行（无输出）
+                    self.dispatch_downstream(&node_id, None)?;
+                }
+                ActorMessage::NodeFailed { node_id, error } => {
+                    // 节点执行失败，立即返回错误终止整个工作流
+                    return Err(WorkflowError::RuntimeError(format!(
+                        "Node {} failed: {}",
+                        node_id, error
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
-    pub async fn execute(
-        &self,
-        def: Arc<Workflow>,
-        graph: Arc<GraphStore>,
-        event_bus: EventBus,
-        flow_context: FlowContext,
-        cancellation: CancellationToken,
-        instance_id: String,
-    ) -> Result<WorkflowResult, WorkflowError> {
-        let mut state = ExecutionState::new(graph);
-        let input = flow_context.payload.clone();
-        let ctx = flow_context;
-
-        event_bus.emit(WorkflowEvent::FlowStarted {
-            id: def.id.clone(),
-            input: input.clone(),
-            timestamp: chrono::Utc::now(),
-        });
-
-        let mut running = JoinSet::new();
-        let mut has_error = false;
-
-        'main: loop {
-            if cancellation.is_cancelled() {
-                running.abort_all();
-                break;
+    /// 分发下游节点的执行任务
+    /// 
+    /// # 逻辑流程
+    /// 1. 获取当前节点的所有下游节点及其激活状态
+    /// 2. 检查哪些下游节点已经满足执行条件（所有依赖已完成）
+    /// 3. 决定是否需要并发执行（如果有多个活跃的下游节点）
+    /// 4. 向消息队列发送执行或跳过消息
+    /// 
+    /// # 参数
+    /// - `node_id`: 当前完成的节点ID
+    /// - `output`: 当前节点的输出值，如果为None则表示节点被跳过
+    /// 
+    /// # 返回值
+    /// - 成功时返回 ()
+    /// - 失败时返回 WorkflowError
+    fn dispatch_downstream(
+        &mut self,
+        node_id: &str,
+        output: Option<&Value>,
+    ) -> Result<(), WorkflowError> {
+        // 获取当前节点的下游节点列表及它们的激活状态
+        let downstream = self.get_downstream_nodes(node_id, output)?;
+        let mut ready = Vec::new();
+        // 检查每个下游节点是否已准备好执行
+        for (target_id, is_active) in downstream {
+            if self.can_execute_node(&target_id, is_active) {
+                // 获取目标节点的活跃传入边计数
+                let active_count = self.active_incoming.get(&target_id).copied().unwrap_or(0);
+                ready.push((target_id, active_count));
             }
-            while let Some(idx) = state.pop_ready() {
-                let node = state.get_node(idx).cloned().unwrap();
-                let policy = NodePolicy::from_value(&node.data);
-
-                let executor = self.get_executor(&node.node_type)?;
-
-                let event_bus = event_bus.clone();
-                let ctx = ctx.clone();
-                let cancellation = cancellation.clone();
-
-                running.spawn(async move {
-                    run_node(node, executor, policy, ctx, event_bus, cancellation).await
-                });
-            }
-
-            if running.is_empty() {
-                break;
-            }
-
-            tokio::select! {
-                _ = cancellation.cancelled() => {
-                    running.abort_all();
-                    break;
-                }
-                res = running.join_next() => {
-                    let Some(res) = res else {
-                        break 'main;
-                    };
-                    let res = match res {
-                        Ok(res) => res,
-                        Err(_) => {
-                            cancellation.cancel();
-                            running.abort_all();
-                            has_error = true;
-                            break 'main;
-                        }
-                    };
-
-                    match &res.error {
-                        None => {
-                            if let Some(output) = &res.output {
-                                ctx.set_output(&res.node_id, output.clone());
-                            }
-                            state.node_completed(&res.node_id, res.output.as_ref());
-                        }
-                        Some(_) => {
-                            if let Some(output) = &res.output {
-                                ctx.set_output(&res.node_id, output.clone());
-                            }
-
-                            match res.strategy {
-                                OnErrorStrategy::FailFast => {
-                                    cancellation.cancel();
-                                    has_error = true;
-                                }
-                                OnErrorStrategy::Fallback => {
-                                    has_error = false;
-                                    if let Some(fallback) = &res.fallback_node_id {
-                                        state.trigger_fallback(fallback);
-                                    }
-                                }
-                                OnErrorStrategy::Continue => {
-                                    has_error = false;
-                                    state.node_completed(&res.node_id, res.output.as_ref());
-                                }
-                            }
-                        }
-                    }
-                }
-            };
         }
 
-        let status = if cancellation.is_cancelled() {
-            FlowStatus::Cancelled
-        } else if has_error {
-            FlowStatus::Failed
-        } else {
-            FlowStatus::Succeeded
-        };
+        // 如果有多个活跃的就绪节点，则启用并发执行
+        let active_ready_count = ready.iter().filter(|(_, count)| *count > 0).count();
+        let spawn = active_ready_count > 1;
+        // 为每个就绪的下游节点发送执行或跳过消息
+        for (target_id, active_count) in ready {
+            let message = if active_count > 0 {
+                // 发送执行消息
+                ActorMessage::Execute {
+                    node_id: target_id,
+                    spawn,
+                }
+            } else {
+                // 发送跳过消息
+                ActorMessage::NodeSkipped { node_id: target_id }
+            };
+            self.tx
+                .send(message)
+                .map_err(|e| WorkflowError::RuntimeError(e.to_string()))?;
+            // 更新待处理节点计数
+            self.pending_count += 1;
+        }
+        Ok(())
+    }
 
-        let end_output = state.get_end_output(&ctx);
+    fn get_downstream_nodes(
+        &self,
+        node_id: &str,
+        output: Option<&Value>,
+    ) -> Result<Vec<(String, bool)>, WorkflowError> {
+        let node_idx = self.graph.node_map.get(node_id).ok_or_else(|| {
+            WorkflowError::RuntimeError(format!("Node {} not found in map", node_id))
+        })?;
+        let mut result = Vec::new();
 
-        let result = WorkflowResult {
-            instance_id,
-            status: status.clone(),
-            output: end_output.clone(),
-        };
-
-        event_bus.emit(WorkflowEvent::FlowFinished {
-            id: def.id.clone(),
-            status,
-            output: end_output,
-        });
-
+        for edge in self
+            .graph
+            .dag
+            .edges_directed(*node_idx, Direction::Outgoing)
+        {
+            let target_node = &self.graph.dag[edge.target()];
+            let edge_data = edge.weight();
+            let is_active = match output {
+                Some(out_val) => match &edge_data.source_handle {
+                    Some(handle) => {
+                        matches!(out_val, Value::Object(map) if map.contains_key(handle))
+                    }
+                    None => true,
+                },
+                None => false,
+            };
+            result.push((target_node.id.clone(), is_active));
+        }
         Ok(result)
     }
+
+    fn can_execute_node(&mut self, node_id: &str, is_incoming_active: bool) -> bool {
+        if is_incoming_active {
+            *self.active_incoming.entry(node_id.to_string()).or_default() += 1;
+        }
+
+        if let Some(count) = self.remaining_dependencies.get_mut(node_id) {
+            *count -= 1;
+            return *count == 0;
+        }
+        // Should not happen for nodes with dependencies
+        false
+    }
+
+    #[allow(dead_code)]
+    fn is_workflow_completed(&self) -> bool {
+        self.pending_count == 0
+    }
 }
 
-async fn run_node(
-    node: Node,
-    executor: Arc<dyn NodeExecutor>,
-    policy: NodePolicy,
-    ctx: FlowContext,
+async fn spawn_node_execution(
+    node_id: String,
+    graph: Arc<WorkflowGraph>,
+    executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
+    flow_context: FlowContext,
     event_bus: EventBus,
-    cancellation: CancellationToken,
-) -> NodeRunResult {
-    let resolved_input = match ctx.resolve_value(&node.data) {
-        Ok(v) => v,
-        Err(e) => {
-            event_bus.emit(WorkflowEvent::NodeError {
-                node_id: node.id.clone(),
-                node_type: node.node_type.clone(),
-                error: e.to_string(),
-                strategy: policy.on_error().as_str().to_string(),
-            });
-            return NodeRunResult {
-                node_id: node.id,
-                node_type: node.node_type,
-                output: None,
-                error: Some(e),
-                strategy: policy.on_error(),
-                fallback_node_id: policy.fallback_node_id.clone(),
-            };
-        }
+    tx: mpsc::UnboundedSender<ActorMessage>,
+    spawn: bool,
+) -> Result<(), WorkflowError> {
+    let node_idx = graph
+        .node_map
+        .get(&node_id)
+        .ok_or_else(|| WorkflowError::RuntimeError(format!("Node {} not found in map", node_id)))?;
+    let node = &graph.dag[*node_idx];
+    let node_type = node.node_type.clone();
+
+    // 解析输入参数
+    let resolved_input = flow_context.resolve_value(&node.data).map_err(|e| {
+        WorkflowError::RuntimeError(format!("Input resolution failed for {}: {}", node_id, e))
+    })?;
+
+    let executor = executors
+        .get(&node_type)
+        .map(|entry| entry.value().clone())
+        .ok_or_else(|| {
+            WorkflowError::RuntimeError(format!("No executor for type: {}", node_type))
+        })?;
+
+    let ctx = NodeContext {
+        node: node.clone(),
+        flow_context: flow_context.clone(),
+        event_bus: event_bus.clone(),
     };
 
-    let mut attempts = 0u32;
-    let max_attempts = policy.max_attempts().max(1);
-    let interval = policy.interval_ms();
+    event_bus.emit(WorkflowEvent::NodeStarted {
+        node_id: node_id.clone(),
+        node_type: node_type.clone(),
+        input: resolved_input,
+    });
 
-    loop {
-        if cancellation.is_cancelled() {
-            return NodeRunResult {
-                node_id: node.id,
-                node_type: node.node_type,
-                output: None,
-                error: Some(WorkflowError::Cancelled),
-                strategy: policy.on_error(),
-                fallback_node_id: policy.fallback_node_id.clone(),
-            };
+    if spawn {
+        tokio::spawn(run_executor(
+            executor, ctx, node_id, node_type, event_bus, tx,
+        ));
+    } else {
+        run_executor(executor, ctx, node_id, node_type, event_bus, tx).await;
+    }
+    Ok(())
+}
+
+async fn run_executor(
+    executor: Arc<dyn NodeExecutor>,
+    ctx: NodeContext,
+    node_id: String,
+    node_type: String,
+    event_bus: EventBus,
+    tx: mpsc::UnboundedSender<ActorMessage>,
+) {
+    let start = std::time::Instant::now();
+    match executor.execute(ctx).await {
+        Ok(output) => {
+            let duration = start.elapsed().as_millis() as u64;
+            event_bus.emit(WorkflowEvent::NodeCompleted {
+                node_id: node_id.clone(),
+                node_type: node_type.clone(),
+                output: output.clone(),
+                duration_ms: duration,
+            });
+            let _ = tx.send(ActorMessage::NodeCompleted { node_id, output });
         }
-        attempts += 1;
-        event_bus.emit(WorkflowEvent::NodeStarted {
-            node_id: node.id.clone(),
-            node_type: node.node_type.clone(),
-            input: resolved_input.clone(),
-        });
-        let started = Instant::now();
-        let exec_ctx = NodeContext {
-            node: node.clone(),
-            resolved_input: resolved_input.clone(),
-            flow_context: ctx.clone(),
-            event_bus: event_bus.clone(),
-        };
-        let fut = executor.execute(exec_ctx);
-        let guarded = std::panic::AssertUnwindSafe(fut).catch_unwind();
-        let result = if let Some(ms) = policy.timeout_ms {
-            match timeout(Duration::from_millis(ms), guarded).await {
-                Ok(inner) => match inner {
-                    Ok(v) => v,
-                    Err(_) => Err(WorkflowError::NodePanicked(node.id.clone())),
-                },
-                Err(_) => Err(WorkflowError::Timeout(node.id.clone())),
-            }
-        } else {
-            match guarded.await {
-                Ok(v) => v,
-                Err(_) => Err(WorkflowError::NodePanicked(node.id.clone())),
-            }
-        };
-        match result {
-            Ok(output) => {
-                let duration_ms = started.elapsed().as_millis() as u64;
-                event_bus.emit(WorkflowEvent::NodeCompleted {
-                    node_id: node.id.clone(),
-                    node_type: node.node_type.clone(),
-                    output: output.clone(),
-                    duration_ms,
-                });
-                return NodeRunResult {
-                    node_id: node.id,
-                    node_type: node.node_type,
-                    output: Some(output),
-                    error: None,
-                    strategy: policy.on_error(),
-                    fallback_node_id: policy.fallback_node_id.clone(),
-                };
-            }
-            Err(err) => {
-                if attempts < max_attempts {
-                    if interval > 0 {
-                        sleep(Duration::from_millis(interval)).await;
-                    }
-                    continue;
-                }
-                event_bus.emit(WorkflowEvent::NodeError {
-                    node_id: node.id.clone(),
-                    node_type: node.node_type.clone(),
-                    error: err.to_string(),
-                    strategy: policy.on_error().as_str().to_string(),
-                });
-                let fallback = if policy.on_error() == OnErrorStrategy::Continue {
-                    Some(json!({ "error": err.to_string() }))
-                } else {
-                    None
-                };
-                return NodeRunResult {
-                    node_id: node.id,
-                    node_type: node.node_type,
-                    output: fallback,
-                    error: Some(err),
-                    strategy: policy.on_error(),
-                    fallback_node_id: policy.fallback_node_id.clone(),
-                };
-            }
+        Err(e) => {
+            event_bus.emit(WorkflowEvent::NodeError {
+                node_id: node_id.clone(),
+                node_type: node_type.clone(),
+                error: e.to_string(),
+                strategy: "fail".to_string(),
+            });
+            let _ = tx.send(ActorMessage::NodeFailed {
+                node_id,
+                error: e.to_string(),
+            });
         }
     }
 }

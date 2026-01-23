@@ -1,6 +1,6 @@
 use sonyflake::Sonyflake;
 use std::sync::OnceLock;
-use crate::model::error::WorkflowError;
+use crate::models::error::WorkflowError;
 
 pub struct Id;
 

@@ -1,5 +1,7 @@
+use crate::models::event::WorkflowEvent;
 use tokio::sync::broadcast;
-use crate::model::event::WorkflowEvent;
+
+const DEFAULT_EVENT_BUS_CAPACITY: usize = 500;
 
 #[derive(Clone)]
 pub struct EventBus {
@@ -18,5 +20,11 @@ impl EventBus {
 
     pub fn emit(&self, event: WorkflowEvent) {
         let _ = self.sender.send(event);
+    }
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new(DEFAULT_EVENT_BUS_CAPACITY)
     }
 }

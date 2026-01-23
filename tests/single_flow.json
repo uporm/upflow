@@ -1,0 +1,139 @@
+{
+  "nodes": [
+    {
+      "id": "start_node",
+      "type": "start",
+      "data": {
+        "title": "开始",
+        "input": [
+          {
+            "name": "users",
+            "type": "ARRAY",
+            "rules": [
+              {
+                "type": "required",
+                "message": "此字段为必填项"
+              }
+            ]
+          },
+          {
+            "name": "name",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required",
+                "message": "此字段为必填项"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "bingxing-node-1",
+      "type": "print",
+      "data": {
+        "title": "并行节点 1"
+      }
+    },
+    {
+      "id": "bingxing-node-2",
+      "type": "print",
+      "data": {
+        "title": "并行节点 2"
+      }
+    },
+    {
+      "id": "switch_node",
+      "type": "switch",
+      "data": {
+        "title": "条件分支",
+        "cases": [
+          {
+            "logic": "and",
+            "conditions": [
+              {
+                "var": "{{start_node.name}}",
+                "opr": "in",
+                "value": "张三"
+              }
+            ],
+            "handle": "zhangsan"
+          }
+        ],
+        "else": {
+          "handle": "default"
+        }
+      }
+    },
+    {
+      "id": "print1",
+      "type": "print",
+      "data": {
+        "title": "Print 1（原 loop）"
+      }
+    },
+    {
+      "id": "print2",
+      "type": "print",
+      "data": {
+        "title": "Print 2（原 subflow）"
+      }
+    },
+    {
+      "id": "end-node",
+      "type": "end",
+      "data": {
+        "title": "结束",
+        "output": {
+          "type": "vars",
+          "vars": []
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start_node",
+      "target": "bingxing-node-1"
+    },
+    {
+      "id": "e2",
+      "source": "start_node",
+      "target": "bingxing-node-2"
+    },
+    {
+      "id": "e3",
+      "source": "bingxing-node-1",
+      "target": "switch_node"
+    },
+    {
+      "id": "e4",
+      "source": "bingxing-node-2",
+      "target": "switch_node"
+    },
+    {
+      "id": "e5",
+      "source": "switch_node",
+      "target": "print1",
+      "sourceHandle": "zhangsan"
+    },
+    {
+      "id": "e6",
+      "source": "switch_node",
+      "target": "print2",
+      "sourceHandle": "default"
+    },
+    {
+      "id": "e7",
+      "source": "print1",
+      "target": "end-node"
+    },
+    {
+      "id": "e8",
+      "source": "print2",
+      "target": "end-node"
+    }
+  ]
+}
