@@ -10,8 +10,8 @@ use crate::models::workflow::Node;
 #[derive(Clone)]
 pub struct FlowContext {
     pub payload: Value,
-    pub node_results: Arc<DashMap<String, Value>>,
-    pub env: Arc<HashMap<String, Value>>,
+    pub node_results: DashMap<String, Arc<Value>>,
+    pub env: HashMap<String, Value>,
 }
 
 impl Default for FlowContext {
@@ -24,8 +24,8 @@ impl FlowContext {
     pub fn new() -> Self {
         Self {
             payload: Value::Null,
-            node_results: Arc::new(DashMap::new()),
-            env: Arc::new(HashMap::new()),
+            node_results: DashMap::new(),
+            env: HashMap::new(),
         }
     }
 
@@ -35,16 +35,16 @@ impl FlowContext {
     }
 
     pub fn with_env(mut self, env: HashMap<String, Value>) -> Self {
-        self.env = Arc::new(env);
+        self.env = env;
         self
     }
 
-    pub fn set_result(&self, node_id: &str, output: Value) {
+    pub fn set_result(&self, node_id: &str, output: Arc<Value>) {
         self.node_results.insert(node_id.to_string(), output);
     }
 
-    pub fn get_result(&self, node_id: &str) -> Option<Value> {
-        self.node_results.get(node_id).map(|v| v.value().clone())
+    pub fn get_result(&self, node_id: &str) -> Option<Arc<Value>> {
+        self.node_results.get(node_id).map(|v| Arc::clone(v.value()))
     }
 
     pub fn resolve_value(&self, value: &Value) -> Result<Value, WorkflowError> {
@@ -54,7 +54,7 @@ impl FlowContext {
 
 pub struct NodeContext {
     pub node: Node,
-    pub flow_context: FlowContext,
+    pub flow_context: Arc<FlowContext>,
     pub event_bus: EventBus,
 }
 
@@ -63,7 +63,8 @@ impl NodeContext {
         self.event_bus.emit(WorkflowEvent::NodeMessage {
             node_id: self.node.id.clone(),
             node_type: self.node.node_type.clone(),
-            message: message.into(),
+            data: Arc::clone(&self.node.data),
+            message: Arc::new(message.into()),
         });
     }
 }

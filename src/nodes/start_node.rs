@@ -9,7 +9,7 @@ pub struct StartNode;
 #[async_trait]
 impl NodeExecutor for StartNode {
     async fn execute(&self, ctx: NodeContext) -> Result<Value, WorkflowError> {
-        let resolved_input = ctx.flow_context.resolve_value(&ctx.node.data)?;
+        let resolved_input = ctx.flow_context.resolve_value(ctx.node.data.as_ref())?;
         Ok(resolved_input)
     }
 }

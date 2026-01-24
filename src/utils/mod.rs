@@ -1,4 +1,4 @@
-pub mod resolver;
-pub mod id;
+pub(crate) mod resolver;
+pub(crate) mod id;
 
-pub use resolver::resolve_value;
+pub(crate) use resolver::resolve_value;

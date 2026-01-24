@@ -88,8 +88,11 @@ fn resolve_variable(ctx: &FlowContext, expr: &str) -> Result<Value, WorkflowErro
             }
         }
         _ => {
-            let base = ctx.get_result(head).unwrap_or(Value::Null);
-            Ok(extract_path(&base, tail))
+            let base = ctx.get_result(head);
+            match base {
+                Some(value) => Ok(extract_path(value.as_ref(), tail)),
+                None => Ok(Value::Null),
+            }
         }
     }
 }

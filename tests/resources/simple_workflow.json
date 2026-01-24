@@ -1,0 +1,35 @@
+{
+  "nodes": [
+    {
+      "id": "node-start",
+      "type": "start",
+      "data": {
+        "message": "Hello from Start Node"
+      }
+    },
+    {
+      "id": "node-print",
+      "type": "print",
+      "data": {
+        "print_content": "{{node-start.message}}"
+      }
+    },
+    {
+      "id": "node-output",
+      "type": "output",
+      "data": {
+        "final_result": "{{node-print.print_content}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "node-start",
+      "target": "node-print"
+    },
+    {
+      "source": "node-print",
+      "target": "node-output"
+    }
+  ]
+}

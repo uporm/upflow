@@ -9,8 +9,8 @@ use crate::nodes::NodeExecutor;
 use crate::utils::id::Id;
 use chrono::Utc;
 use dashmap::DashMap;
-use petgraph::Direction;
 use petgraph::visit::EdgeRef;
+use petgraph::Direction;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,11 +18,11 @@ use tokio::sync::mpsc;
 
 /// 工作流调度器
 /// 负责管理节点执行器并调度工作流的执行过程
-pub struct WorkflowScheduler {
+pub struct WorkflowRuntime {
     node_executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
 }
 
-impl WorkflowScheduler {
+impl WorkflowRuntime {
     /// 创建一个新的调度器实例
     pub fn new() -> Self {
         Self {
@@ -48,7 +48,7 @@ impl WorkflowScheduler {
     /// - `workflow_graph`: 工作流图结构
     pub async fn execute(
         &self,
-        flow_context: FlowContext,
+        flow_context: Arc<FlowContext>,
         event_bus: EventBus,
         workflow_graph: Arc<WorkflowGraph>,
     ) -> Result<WorkflowResult, WorkflowError> {
@@ -72,7 +72,7 @@ impl WorkflowScheduler {
 struct WorkflowActor {
     graph: Arc<WorkflowGraph>,
     executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
-    flow_context: FlowContext,
+    flow_context: Arc<FlowContext>,
     event_bus: EventBus,
     tx: mpsc::UnboundedSender<ActorMessage>,
     remaining_dependencies: HashMap<String, usize>,
@@ -85,7 +85,7 @@ impl WorkflowActor {
     fn new(
         graph: Arc<WorkflowGraph>,
         executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
-        flow_context: FlowContext,
+        flow_context: Arc<FlowContext>,
         event_bus: EventBus,
         tx: mpsc::UnboundedSender<ActorMessage>,
     ) -> Self {
@@ -96,20 +96,20 @@ impl WorkflowActor {
             event_bus,
             tx,
             remaining_dependencies: HashMap::new(),
-            pending_count: 0,
             active_incoming: HashMap::new(),
+            pending_count: 0,
             instance_id: 0,
         }
     }
 
     /// 初始化工作流状态
-    /// 
+    ///
     /// # 逻辑流程
     /// 1. 遍历图中的所有节点
     /// 2. 计算每个节点的入度（上游依赖的数量）
     /// 3. 将入度为0的节点加入初始节点列表
     /// 4. 将其他节点的依赖数量记录到remaining_dependencies中
-    /// 
+    ///
     /// # 返回值
     /// - 返回入度为0的节点ID列表（即可以立即执行的节点）
     fn init_state(&mut self) -> Vec<String> {
@@ -138,7 +138,7 @@ impl WorkflowActor {
     }
 
     /// 执行工作流的主要方法
-    /// 
+    ///
     /// # 逻辑流程
     /// 1. 初始化工作流实例ID和状态
     /// 2. 发送工作流开始事件
@@ -148,10 +148,10 @@ impl WorkflowActor {
     /// 6. 向消息队列发送执行消息以启动初始节点
     /// 7. 处理节点间的消息传递直到所有节点完成
     /// 8. 收集最终结果并发送工作流结束事件
-    /// 
+    ///
     /// # 参数
     /// - `rx`: 接收来自节点的消息通道
-    /// 
+    ///
     /// # 返回值
     /// - 成功时返回包含结果的 WorkflowResult
     /// - 失败时返回 WorkflowError
@@ -165,28 +165,21 @@ impl WorkflowActor {
         // 发送工作流开始事件，通知监听者工作流已启动
         self.event_bus.emit(WorkflowEvent::FlowStarted {
             id: self.instance_id,
-            input: self.flow_context.payload.clone(),
+            input: Arc::new(self.flow_context.payload.clone()),
             timestamp: Utc::now(),
         });
 
         // 初始化工作流状态并获取所有入度为0的节点作为起始节点
         let initial_nodes = self.init_state();
-        
-        // 如果图不为空但没有初始节点，则表示存在循环依赖或缺少起始节点
-        if initial_nodes.is_empty() && self.graph.dag.node_count() > 0 {
-            return Err(WorkflowError::InvalidGraph(
-                "Cycle detected or no start node".to_string(),
-            ));
-        }
 
         // 如果有多个初始节点，则使用并发执行
         let spawn_initial_nodes = initial_nodes.len() > 1;
-        
+
         // 为每个初始节点创建执行消息并将其发送到消息队列
         for node_id in initial_nodes {
             self.tx
                 .send(ActorMessage::Execute {
-                    node_id: node_id.clone(),
+                    node_id,
                     spawn: spawn_initial_nodes,
                 })
                 .map_err(|e| WorkflowError::RuntimeError(e.to_string()))?;
@@ -205,21 +198,22 @@ impl WorkflowActor {
             return Err(e);
         }
 
-        // 尝试从出度为 0 的节点获取最终输出结果
+        // 从出度为 0 的节点获取最终输出结果
         let output = self.graph.dag.node_indices().find_map(|idx| {
-            let node = &self.graph.dag[idx];
-            let is_sink = self
+            if self
                 .graph
                 .dag
                 .edges_directed(idx, Direction::Outgoing)
                 .next()
-                .is_none();
-            if is_sink {
+                .is_none()
+            {
+                let node = &self.graph.dag[idx];
                 self.flow_context.get_result(&node.id)
             } else {
                 None
             }
         });
+        let output_value = output.as_ref().map(|value| value.as_ref().clone());
 
         // 发送工作流完成事件，通知监听者工作流已成功结束
         self.event_bus.emit(WorkflowEvent::FlowFinished {
@@ -232,12 +226,12 @@ impl WorkflowActor {
         Ok(WorkflowResult {
             instance_id: self.instance_id,
             status: FlowStatus::Succeeded,
-            output,
+            output: output_value,
         })
     }
 
     /// 处理节点间的消息传递
-    /// 
+    ///
     /// # 逻辑流程
     /// 1. 循环接收消息直到所有节点完成（pending_count为0）
     /// 2. 根据消息类型进行相应处理：
@@ -245,10 +239,10 @@ impl WorkflowActor {
     ///    - NodeCompleted: 节点成功完成，更新上下文并触发下游节点
     ///    - NodeSkipped: 节点被跳过，直接触发下游节点
     ///    - NodeFailed: 节点执行失败，立即返回错误
-    /// 
+    ///
     /// # 参数
     /// - `rx`: 接收来自节点的消息通道
-    /// 
+    ///
     /// # 返回值
     /// - 成功时返回 ()
     /// - 失败时返回 WorkflowError
@@ -265,8 +259,9 @@ impl WorkflowActor {
             match msg {
                 ActorMessage::Execute { node_id, spawn } => {
                     // 处理执行消息，启动指定节点的执行
+                    let node_id_for_error = node_id.clone();
                     spawn_node_execution(
-                        node_id.clone(),
+                        node_id,
                         self.graph.clone(),
                         self.executors.clone(),
                         self.flow_context.clone(),
@@ -278,7 +273,7 @@ impl WorkflowActor {
                     .map_err(|e| {
                         WorkflowError::RuntimeError(format!(
                             "Node {} failed to start: {}",
-                            node_id, e
+                            node_id_for_error, e
                         ))
                     })?;
                 }
@@ -286,9 +281,9 @@ impl WorkflowActor {
                     // 节点完成执行，减少待处理计数
                     self.pending_count -= 1;
                     // 将节点的输出结果存储到流程上下文中
-                    self.flow_context.set_result(&node_id, output.clone());
+                    self.flow_context.set_result(&node_id, Arc::clone(&output));
                     // 触发下游节点的执行
-                    self.dispatch_downstream(&node_id, Some(&output))?;
+                    self.dispatch_downstream(&node_id, Some(output.as_ref()))?;
                 }
                 ActorMessage::NodeSkipped { node_id } => {
                     // 节点被跳过执行，减少待处理计数
@@ -309,17 +304,17 @@ impl WorkflowActor {
     }
 
     /// 分发下游节点的执行任务
-    /// 
+    ///
     /// # 逻辑流程
     /// 1. 获取当前节点的所有下游节点及其激活状态
     /// 2. 检查哪些下游节点已经满足执行条件（所有依赖已完成）
     /// 3. 决定是否需要并发执行（如果有多个活跃的下游节点）
     /// 4. 向消息队列发送执行或跳过消息
-    /// 
+    ///
     /// # 参数
     /// - `node_id`: 当前完成的节点ID
     /// - `output`: 当前节点的输出值，如果为None则表示节点被跳过
-    /// 
+    ///
     /// # 返回值
     /// - 成功时返回 ()
     /// - 失败时返回 WorkflowError
@@ -418,7 +413,7 @@ async fn spawn_node_execution(
     node_id: String,
     graph: Arc<WorkflowGraph>,
     executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
-    flow_context: FlowContext,
+    flow_context: Arc<FlowContext>,
     event_bus: EventBus,
     tx: mpsc::UnboundedSender<ActorMessage>,
     spawn: bool,
@@ -431,7 +426,7 @@ async fn spawn_node_execution(
     let node_type = node.node_type.clone();
 
     // 解析输入参数
-    let resolved_input = flow_context.resolve_value(&node.data).map_err(|e| {
+    let resolved_input = flow_context.resolve_value(node.data.as_ref()).map_err(|e| {
         WorkflowError::RuntimeError(format!("Input resolution failed for {}: {}", node_id, e))
     })?;
 
@@ -442,24 +437,31 @@ async fn spawn_node_execution(
             WorkflowError::RuntimeError(format!("No executor for type: {}", node_type))
         })?;
 
+    let node_data = Arc::clone(&node.data);
     let ctx = NodeContext {
         node: node.clone(),
-        flow_context: flow_context.clone(),
+        flow_context: Arc::clone(&flow_context),
         event_bus: event_bus.clone(),
     };
-
     event_bus.emit(WorkflowEvent::NodeStarted {
         node_id: node_id.clone(),
         node_type: node_type.clone(),
-        input: resolved_input,
+        data: Arc::clone(&node_data),
+        input: Arc::new(resolved_input),
     });
 
     if spawn {
         tokio::spawn(run_executor(
-            executor, ctx, node_id, node_type, event_bus, tx,
+            executor,
+            ctx,
+            node_id,
+            node_type,
+            node_data,
+            event_bus,
+            tx,
         ));
     } else {
-        run_executor(executor, ctx, node_id, node_type, event_bus, tx).await;
+        run_executor(executor, ctx, node_id, node_type, node_data, event_bus, tx).await;
     }
     Ok(())
 }
@@ -469,6 +471,7 @@ async fn run_executor(
     ctx: NodeContext,
     node_id: String,
     node_type: String,
+    node_data: Arc<Value>,
     event_bus: EventBus,
     tx: mpsc::UnboundedSender<ActorMessage>,
 ) {
@@ -476,10 +479,12 @@ async fn run_executor(
     match executor.execute(ctx).await {
         Ok(output) => {
             let duration = start.elapsed().as_millis() as u64;
+            let output = Arc::new(output);
             event_bus.emit(WorkflowEvent::NodeCompleted {
                 node_id: node_id.clone(),
                 node_type: node_type.clone(),
-                output: output.clone(),
+                data: Arc::clone(&node_data),
+                output: Arc::clone(&output),
                 duration_ms: duration,
             });
             let _ = tx.send(ActorMessage::NodeCompleted { node_id, output });
@@ -488,6 +493,7 @@ async fn run_executor(
             event_bus.emit(WorkflowEvent::NodeError {
                 node_id: node_id.clone(),
                 node_type: node_type.clone(),
+                data: Arc::clone(&node_data),
                 error: e.to_string(),
                 strategy: "fail".to_string(),
             });

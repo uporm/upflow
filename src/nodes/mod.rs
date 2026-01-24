@@ -1,7 +1,9 @@
+mod group_node;
 mod start_node;
 mod subflow_node;
 mod switch_node;
 
+pub use group_node::GroupNode;
 pub use start_node::StartNode;
 pub use subflow_node::SubflowNode;
 pub use switch_node::DecisionNode;

@@ -9,7 +9,7 @@ pub struct DecisionNode;
 #[async_trait]
 impl NodeExecutor for DecisionNode {
     async fn execute(&self, ctx: NodeContext) -> Result<Value, WorkflowError> {
-        let resolved_input = ctx.flow_context.resolve_value(&ctx.node.data)?;
+        let resolved_input = ctx.flow_context.resolve_value(ctx.node.data.as_ref())?;
         let branches = resolved_input
             .get("cases")
             .or_else(|| resolved_input.get("branches"))
@@ -100,6 +100,7 @@ mod tests {
     use crate::models::event_bus::EventBus;
     use crate::models::workflow::Node;
     use serde_json::json;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_decision_node_in_opr() {
@@ -127,14 +128,14 @@ mod tests {
         let node = Node {
             id: "decision_node".to_string(),
             node_type: "decision".to_string(),
-            data: data.clone(),
+            data: Arc::new(data.clone()),
             parent_id: None,
             retry_policy: None,
         };
 
         let ctx = NodeContext {
             node,
-            flow_context: FlowContext::new(),
+            flow_context: Arc::new(FlowContext::new()),
             event_bus: EventBus::new(10),
         };
 
@@ -169,14 +170,14 @@ mod tests {
         let node = Node {
             id: "decision_node".to_string(),
             node_type: "decision".to_string(),
-            data: data.clone(),
+            data: Arc::new(data.clone()),
             parent_id: None,
             retry_policy: None,
         };
 
         let ctx = NodeContext {
             node,
-            flow_context: FlowContext::new(),
+            flow_context: Arc::new(FlowContext::new()),
             event_bus: EventBus::new(10),
         };
 
