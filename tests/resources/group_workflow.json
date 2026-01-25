@@ -1,0 +1,64 @@
+{
+  "nodes": [
+    {
+      "id": "node-start",
+      "type": "start",
+      "data": {
+        "message": "开始"
+      }
+    },
+    {
+      "id": "node-group",
+      "type": "group",
+      "data": {}
+    },
+    {
+      "id": "inner-start",
+      "type": "start",
+      "parentId": "node-group",
+      "data": {
+        "inner_msg": "内部"
+      }
+    },
+    {
+      "id": "inner-print",
+      "type": "print",
+      "parentId": "node-group",
+      "data": {
+        "print_content": "{{node-start.message}} -> {{inner-start.inner_msg}}"
+      }
+    },
+    {
+      "id": "node-output",
+      "type": "output",
+      "data": {
+        "final_result": "{{node-group.print_content}}"
+      }
+    },
+    {
+      "id": "node-end",
+      "type": "end",
+      "data": {
+        "final_result": "{{node-output.final_result}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "node-start",
+      "target": "node-group"
+    },
+    {
+      "source": "inner-start",
+      "target": "inner-print"
+    },
+    {
+      "source": "node-group",
+      "target": "node-output"
+    },
+    {
+      "source": "node-output",
+      "target": "node-end"
+    }
+  ]
+}

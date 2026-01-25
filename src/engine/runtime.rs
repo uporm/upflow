@@ -159,12 +159,12 @@ impl WorkflowActor {
         &mut self,
         rx: mpsc::UnboundedReceiver<ActorMessage>,
     ) -> Result<WorkflowResult, WorkflowError> {
+        let start_time = std::time::Instant::now();
         // 生成唯一的工作流实例 ID
         self.instance_id = Id::next_id().unwrap_or(0);
 
         // 发送工作流开始事件，通知监听者工作流已启动
         self.event_bus.emit(WorkflowEvent::FlowStarted {
-            id: self.instance_id,
             input: Arc::new(self.flow_context.payload.clone()),
             timestamp: Utc::now(),
         });
@@ -189,11 +189,12 @@ impl WorkflowActor {
 
         // 处理节点间的消息交互，直到所有节点完成或发生错误
         if let Err(e) = self.process_messages(rx).await {
+            let duration_ms = start_time.elapsed().as_millis() as u64;
             // 如果处理消息时发生错误，发送失败事件并返回错误
             self.event_bus.emit(WorkflowEvent::FlowFinished {
-                id: self.instance_id,
                 status: FlowStatus::Failed,
                 output: None,
+                duration_ms,
             });
             return Err(e);
         }
@@ -216,10 +217,11 @@ impl WorkflowActor {
         let output_value = output.as_ref().map(|value| value.as_ref().clone());
 
         // 发送工作流完成事件，通知监听者工作流已成功结束
+        let duration_ms = start_time.elapsed().as_millis() as u64;
         self.event_bus.emit(WorkflowEvent::FlowFinished {
-            id: self.instance_id,
             status: FlowStatus::Succeeded,
             output: output.clone(),
+            duration_ms,
         });
 
         // 返回成功的工作流结果
@@ -335,9 +337,8 @@ impl WorkflowActor {
             }
         }
 
-        // 如果有多个活跃的就绪节点，则启用并发执行
-        let active_ready_count = ready.iter().filter(|(_, count)| *count > 0).count();
-        let spawn = active_ready_count > 1;
+        // 总是启用并发执行，避免阻塞 Actor
+        let spawn = true;
         // 为每个就绪的下游节点发送执行或跳过消息
         for (target_id, active_count) in ready {
             let message = if active_count > 0 {

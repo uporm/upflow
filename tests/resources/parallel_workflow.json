@@ -1,0 +1,58 @@
+{
+  "nodes": [
+    {
+      "id": "node-start-a",
+      "type": "start",
+      "data": {
+        "message": "Hello A"
+      }
+    },
+    {
+      "id": "node-start-b",
+      "type": "start",
+      "data": {
+        "message": "Hello B"
+      }
+    },
+    {
+      "id": "node-print-a",
+      "type": "print",
+      "data": {
+        "message": "{{node-start-a.message}}"
+      }
+    },
+    {
+      "id": "node-print-b",
+      "type": "print",
+      "data": {
+        "message": "{{node-start-b.message}}"
+      }
+    },
+    {
+      "id": "node-output",
+      "type": "output",
+      "data": {
+        "a": "{{node-print-a.message}}",
+        "b": "{{node-print-b.message}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "node-start-a",
+      "target": "node-print-a"
+    },
+    {
+      "source": "node-start-b",
+      "target": "node-print-b"
+    },
+    {
+      "source": "node-print-a",
+      "target": "node-output"
+    },
+    {
+      "source": "node-print-b",
+      "target": "node-output"
+    }
+  ]
+}

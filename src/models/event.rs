@@ -7,7 +7,6 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WorkflowEvent {
     FlowStarted {
-        id: u64,
         input: Arc<Value>,
         timestamp: DateTime<Utc>,
     },
@@ -38,8 +37,8 @@ pub enum WorkflowEvent {
         strategy: String,
     },
     FlowFinished {
-        id: u64,
         status: FlowStatus,
         output: Option<Arc<Value>>,
+        duration_ms: u64,
     },
 }

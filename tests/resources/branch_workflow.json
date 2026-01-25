@@ -1,0 +1,100 @@
+{
+  "nodes": [
+    {
+      "id": "node-start",
+      "type": "start",
+      "data": {
+        "route": "A"
+      }
+    },
+    {
+      "id": "node-decision",
+      "type": "decision",
+      "data": {
+        "branches": [
+          {
+            "logic": "and",
+            "conditions": [
+              {
+                "var": "{{node-start.route}}",
+                "opr": "eq",
+                "value": "A"
+              }
+            ],
+            "handle": "branch-a"
+          }
+        ],
+        "else": {
+          "handle": "branch-b"
+        }
+      }
+    },
+    {
+      "id": "node-print-a-1",
+      "type": "print",
+      "data": {
+        "label": "A1"
+      }
+    },
+    {
+      "id": "node-print-a-2",
+      "type": "print",
+      "data": {
+        "label": "A"
+      }
+    },
+    {
+      "id": "node-print-b-1",
+      "type": "print",
+      "data": {
+        "label": "B1"
+      }
+    },
+    {
+      "id": "node-print-b-2",
+      "type": "print",
+      "data": {
+        "label": "B"
+      }
+    },
+    {
+      "id": "node-output",
+      "type": "output",
+      "data": {
+        "selected": "{{node-print-a-2.label}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "node-start",
+      "target": "node-decision"
+    },
+    {
+      "source": "node-decision",
+      "target": "node-print-a-1",
+      "sourceHandle": "branch-a"
+    },
+    {
+      "source": "node-print-a-1",
+      "target": "node-print-a-2"
+    },
+    {
+      "source": "node-print-a-2",
+      "target": "node-output"
+    },
+    {
+      "source": "node-decision",
+      "target": "node-print-b-1",
+      "sourceHandle": "branch-b"
+    },
+    {
+      "source": "node-print-b-1",
+      "target": "node-print-b-2"
+    },
+    {
+      "source": "node-print-b-2",
+      "target": "node-output"
+    }
+  ]
+}

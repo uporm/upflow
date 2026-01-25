@@ -1,0 +1,63 @@
+{
+  "nodes": [
+    {
+      "id": "node-start-a",
+      "type": "start",
+      "data": { "message": "Branch A Start", "sleep_ms": 100 }
+    },
+    {
+      "id": "node-start-b",
+      "type": "start",
+      "data": { "message": "Branch B Start", "sleep_ms": 50 }
+    },
+    {
+      "id": "node-start-c",
+      "type": "start",
+      "data": { "message": "Branch C Start", "sleep_ms": 10 }
+    },
+    {
+      "id": "node-a-1",
+      "type": "print",
+      "data": { "message": "Process A1", "sleep_ms": 100, "input": "{{node-start-a.message}}" }
+    },
+    {
+      "id": "node-a-2",
+      "type": "print",
+      "data": { "message": "Process A2", "sleep_ms": 100, "input": "{{node-a-1.message}}" }
+    },
+    {
+      "id": "node-b-1",
+      "type": "print",
+      "data": { "message": "Process B1", "sleep_ms": 200, "input": "{{node-start-b.message}}" }
+    },
+    {
+      "id": "node-c-1",
+      "type": "print",
+      "data": { "message": "Process C1", "sleep_ms": 50, "input": "{{node-start-c.message}}" }
+    },
+    {
+      "id": "node-c-2",
+      "type": "print",
+      "data": { "message": "Process C2", "sleep_ms": 50, "input": "{{node-c-1.message}}" }
+    },
+    {
+      "id": "node-output",
+      "type": "output",
+      "data": {
+        "a": "{{node-a-2.message}}",
+        "b": "{{node-b-1.message}}",
+        "c": "{{node-c-2.message}}"
+      }
+    }
+  ],
+  "edges": [
+    { "source": "node-start-a", "target": "node-a-1" },
+    { "source": "node-a-1", "target": "node-a-2" },
+    { "source": "node-a-2", "target": "node-output" },
+    { "source": "node-start-b", "target": "node-b-1" },
+    { "source": "node-b-1", "target": "node-output" },
+    { "source": "node-start-c", "target": "node-c-1" },
+    { "source": "node-c-1", "target": "node-c-2" },
+    { "source": "node-c-2", "target": "node-output" }
+  ]
+}

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
+use std::thread;
 use uflow::prelude::*;
 
 struct PrintNode;
@@ -14,6 +15,7 @@ impl NodeExecutor for PrintNode {
         let resolved = ctx.flow_context.resolve_value(ctx.node.data.as_ref())?;
 
         // 在实际打印节点中，我们可能会打印到标准输出或日志
+        println!("PrintNode 线程号: {:?}", thread::current().id());
         if let Some(content) = resolved.get("print_content") {
             println!("打印节点内容: {}", content);
         } else {
@@ -31,6 +33,7 @@ struct OutputNode;
 impl NodeExecutor for OutputNode {
     async fn execute(&self, ctx: NodeContext) -> Result<Value, WorkflowError> {
         let resolved = ctx.flow_context.resolve_value(ctx.node.data.as_ref())?;
+        println!("OutputNode 线程号: {:?}", thread::current().id());
         println!("OutputNode resolved: {:?}", resolved);
         Ok(resolved)
     }
