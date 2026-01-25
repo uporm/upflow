@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use std::fs;
 use std::path::PathBuf;
-use uflow::prelude::*;
+use upflow::prelude::*;
 
 struct PrintNode;
 

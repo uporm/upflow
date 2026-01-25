@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use uflow::prelude::*;
+use upflow::prelude::*;
 
 struct PrintNode;
 
