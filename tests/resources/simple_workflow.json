@@ -4,7 +4,17 @@
       "id": "node-start",
       "type": "start",
       "data": {
-        "message": "Hello from Start Node"
+        "input": [
+          {
+            "name": "message",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required"
+              }
+            ]
+          }
+        ]
       }
     },
     {

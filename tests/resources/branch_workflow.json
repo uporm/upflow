@@ -4,7 +4,12 @@
       "id": "node-start",
       "type": "start",
       "data": {
-        "route": "A"
+        "input": [
+          {
+            "name": "route",
+            "type": "STRING"
+          }
+        ]
       }
     },
     {
@@ -61,7 +66,7 @@
       "id": "node-output",
       "type": "output",
       "data": {
-        "selected": "{{node-print-a-2.label}}"
+        "selected": "{{node-print-a-2.label}}{{node-print-b-2.label}}"
       }
     }
   ],
@@ -72,8 +77,8 @@
     },
     {
       "source": "node-decision",
-      "target": "node-print-a-1",
-      "sourceHandle": "branch-a"
+      "sourceHandle": "branch-a",
+      "target": "node-print-a-1"
     },
     {
       "source": "node-print-a-1",
@@ -85,8 +90,8 @@
     },
     {
       "source": "node-decision",
-      "target": "node-print-b-1",
-      "sourceHandle": "branch-b"
+      "sourceHandle": "branch-b",
+      "target": "node-print-b-1"
     },
     {
       "source": "node-print-b-1",

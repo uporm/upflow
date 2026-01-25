@@ -4,28 +4,32 @@
       "id": "node-start-a",
       "type": "start",
       "data": {
-        "message": "Hello A"
+        "input": [
+          { "name": "msg_a", "type": "STRING" }
+        ]
       }
     },
     {
       "id": "node-start-b",
       "type": "start",
       "data": {
-        "message": "Hello B"
+        "input": [
+          { "name": "msg_b", "type": "STRING" }
+        ]
       }
     },
     {
       "id": "node-print-a",
       "type": "print",
       "data": {
-        "message": "{{node-start-a.message}}"
+        "message": "{{node-start-a.msg_a}}"
       }
     },
     {
       "id": "node-print-b",
       "type": "print",
       "data": {
-        "message": "{{node-start-b.message}}"
+        "message": "{{node-start-b.msg_b}}"
       }
     },
     {

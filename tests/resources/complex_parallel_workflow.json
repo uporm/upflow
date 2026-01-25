@@ -3,22 +3,37 @@
     {
       "id": "node-start-a",
       "type": "start",
-      "data": { "message": "Branch A Start", "sleep_ms": 100 }
+      "data": {
+        "input": [
+          { "name": "msg_a", "type": "STRING" },
+          { "name": "sleep_a", "type": "INTEGER" }
+        ]
+      }
     },
     {
       "id": "node-start-b",
       "type": "start",
-      "data": { "message": "Branch B Start", "sleep_ms": 50 }
+      "data": {
+        "input": [
+          { "name": "msg_b", "type": "STRING" },
+          { "name": "sleep_b", "type": "INTEGER" }
+        ]
+      }
     },
     {
       "id": "node-start-c",
       "type": "start",
-      "data": { "message": "Branch C Start", "sleep_ms": 10 }
+      "data": {
+        "input": [
+          { "name": "msg_c", "type": "STRING" },
+          { "name": "sleep_c", "type": "INTEGER" }
+        ]
+      }
     },
     {
       "id": "node-a-1",
       "type": "print",
-      "data": { "message": "Process A1", "sleep_ms": 100, "input": "{{node-start-a.message}}" }
+      "data": { "message": "Process A1", "sleep_ms": 100, "input": "{{node-start-a.msg_a}}" }
     },
     {
       "id": "node-a-2",
@@ -28,12 +43,12 @@
     {
       "id": "node-b-1",
       "type": "print",
-      "data": { "message": "Process B1", "sleep_ms": 200, "input": "{{node-start-b.message}}" }
+      "data": { "message": "Process B1", "sleep_ms": 200, "input": "{{node-start-b.msg_b}}" }
     },
     {
       "id": "node-c-1",
       "type": "print",
-      "data": { "message": "Process C1", "sleep_ms": 50, "input": "{{node-start-c.message}}" }
+      "data": { "message": "Process C1", "sleep_ms": 50, "input": "{{node-start-c.msg_c}}" }
     },
     {
       "id": "node-c-2",
@@ -51,13 +66,37 @@
     }
   ],
   "edges": [
-    { "source": "node-start-a", "target": "node-a-1" },
-    { "source": "node-a-1", "target": "node-a-2" },
-    { "source": "node-a-2", "target": "node-output" },
-    { "source": "node-start-b", "target": "node-b-1" },
-    { "source": "node-b-1", "target": "node-output" },
-    { "source": "node-start-c", "target": "node-c-1" },
-    { "source": "node-c-1", "target": "node-c-2" },
-    { "source": "node-c-2", "target": "node-output" }
+    {
+      "source": "node-start-a",
+      "target": "node-a-1"
+    },
+    {
+      "source": "node-a-1",
+      "target": "node-a-2"
+    },
+    {
+      "source": "node-a-2",
+      "target": "node-output"
+    },
+    {
+      "source": "node-start-b",
+      "target": "node-b-1"
+    },
+    {
+      "source": "node-b-1",
+      "target": "node-output"
+    },
+    {
+      "source": "node-start-c",
+      "target": "node-c-1"
+    },
+    {
+      "source": "node-c-1",
+      "target": "node-c-2"
+    },
+    {
+      "source": "node-c-2",
+      "target": "node-output"
+    }
   ]
 }

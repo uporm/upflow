@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use uflow::prelude::*;
 
@@ -62,8 +63,13 @@ async fn test_simple_workflow() {
         .expect("Failed to load workflow");
 
     // 4. Run Workflow
+    let payload = serde_json::json!({
+        "message": "Hello from Start Node"
+    });
+    let flow_context = Arc::new(FlowContext::new().with_payload(payload));
+    
     let result = engine
-        .run(workflow_id)
+        .run_with_ctx(workflow_id, flow_context)
         .await
         .expect("Failed to run workflow");
 

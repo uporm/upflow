@@ -62,8 +62,13 @@ async fn test_branch_workflow() {
         }
     });
 
+    let payload = serde_json::json!({
+        "route": "A"
+    });
+    let flow_context = Arc::new(FlowContext::new().with_payload(payload));
+
     let result = engine
-        .run_with_event(workflow_id, event_bus)
+        .run_with_ctx_event(workflow_id, flow_context, event_bus)
         .await
         .expect("Failed to run workflow");
 
@@ -75,7 +80,8 @@ async fn test_branch_workflow() {
     assert_eq!(result.status, FlowStatus::Succeeded);
 
     let output = result.output.expect("Workflow should have output");
-    assert_eq!(output["selected"], "A");
+    // "Anull" because node-print-b-2 is skipped, resolving to null -> "null" string
+    assert_eq!(output["selected"], "Anull");
 
     let collected_events = events.lock().unwrap();
     let has_flow_started = collected_events

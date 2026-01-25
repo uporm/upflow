@@ -64,21 +64,19 @@ async fn test_group_workflow() {
             // println!("收到事件: {:?}", event);
             events_clone.lock().unwrap().push(event.clone());
             if let WorkflowEvent::FlowFinished { .. } = event {
-                // 主流程结束时退出。注意：子流程也会发送 FlowFinished，需要区分吗？
-                // GroupNode 启动的是子流程，子流程 ID 不同。
-                // 我们可以简单地收集所有事件，稍后验证。
-                // 这里为了简单，假设最后一个 FlowFinished 是主流程的，或者我们可以设置一个超时来停止收集。
-                // 但更好的方式是检查 workflow_id。
-                // 由于我们无法在此处轻易知道主 workflow_id（虽然可以闭包捕获），
-                // 且主流程结束通常是最后发生的，我们暂且认为收到事件即可。
-                // 为了避免子流程结束就退出，我们这里不根据 FlowFinished 退出，
-                // 而是依赖外部 timeout 或者判断是否是主流程 ID。
+                // 主流程结束时退出。
             }
         }
     });
 
+    let payload = serde_json::json!({
+        "message": "开始",
+        "inner_msg": "内部"
+    });
+    let flow_context = Arc::new(FlowContext::new().with_payload(payload));
+
     let result = engine
-        .run_with_event(workflow_id, event_bus)
+        .run_with_ctx_event(workflow_id, flow_context, event_bus)
         .await
         .expect("Failed to run workflow");
 

@@ -4,7 +4,12 @@
       "id": "node-start",
       "type": "start",
       "data": {
-        "message": "开始"
+        "input": [
+          {
+            "name": "message",
+            "type": "STRING"
+          }
+        ]
       }
     },
     {
@@ -17,7 +22,12 @@
       "type": "start",
       "parentId": "node-group",
       "data": {
-        "inner_msg": "内部"
+        "input": [
+          {
+            "name": "inner_msg",
+            "type": "STRING"
+          }
+        ]
       }
     },
     {

@@ -76,8 +76,19 @@ async fn test_parallel_workflow() {
     });
 
     let start_time = std::time::Instant::now();
+    
+    let payload = serde_json::json!({
+        "msg_a": "Branch A Start",
+        "sleep_a": 100,
+        "msg_b": "Branch B Start",
+        "sleep_b": 50,
+        "msg_c": "Branch C Start",
+        "sleep_c": 10
+    });
+    let flow_context = Arc::new(FlowContext::new().with_payload(payload));
+
     let result = engine
-        .run_with_event(workflow_id, event_bus)
+        .run_with_ctx_event(workflow_id, flow_context, event_bus)
         .await
         .expect("Failed to run workflow");
     let elapsed = start_time.elapsed();
