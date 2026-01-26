@@ -279,16 +279,18 @@ mod tests {
 
     async fn create_ctx(node_data: Value, payload: Value) -> NodeContext {
         let flow_ctx = FlowContext::new().with_payload(payload);
+        let node_data = Arc::new(node_data);
         NodeContext {
             node: Node {
                 id: "start".to_string(),
                 parent_id: None,
                 node_type: "start".to_string(),
-                data: Arc::new(node_data),
+                data: node_data.clone(),
                 retry_policy: None,
             },
             flow_context: Arc::new(flow_ctx),
             event_bus: EventBus::new(10),
+            resolved_data: node_data,
         }
     }
 

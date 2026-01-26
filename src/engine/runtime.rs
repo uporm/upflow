@@ -165,11 +165,14 @@ impl WorkflowActor {
 
         // 发送工作流开始事件，通知监听者工作流已启动
         self.event_bus.emit(WorkflowEvent::FlowStarted {
-            input: Arc::new(self.flow_context.payload.clone()),
+            payload: Arc::new(self.flow_context.payload.clone()),
             timestamp: Utc::now(),
         });
 
-        // 初始化工作流状态并获取所有入度为0的节点作为起始节点
+        // 让出 CPU 时间片，确保 FlowStarted 事件能被订阅者及时处理
+        tokio::task::yield_now().await;
+
+        // 查找所有入度为 0 的节点作为初始节点
         let initial_nodes = self.init_state();
 
         // 如果有多个初始节点，则使用并发执行
@@ -192,10 +195,11 @@ impl WorkflowActor {
             let duration_ms = start_time.elapsed().as_millis() as u64;
             // 如果处理消息时发生错误，发送失败事件并返回错误
             self.event_bus.emit(WorkflowEvent::FlowFinished {
-                status: FlowStatus::Failed,
                 output: None,
                 duration_ms,
             });
+            // 让出 CPU 时间片，确保 FlowFinished 事件能被订阅者及时处理
+            tokio::task::yield_now().await;
             return Err(e);
         }
 
@@ -219,10 +223,12 @@ impl WorkflowActor {
         // 发送工作流完成事件，通知监听者工作流已成功结束
         let duration_ms = start_time.elapsed().as_millis() as u64;
         self.event_bus.emit(WorkflowEvent::FlowFinished {
-            status: FlowStatus::Succeeded,
             output: output.clone(),
             duration_ms,
         });
+
+        // 让出 CPU 时间片，确保 FlowFinished 事件能被订阅者及时处理
+        tokio::task::yield_now().await;
 
         // 返回成功的工作流结果
         Ok(WorkflowResult {
@@ -430,6 +436,7 @@ async fn spawn_node_execution(
     let resolved_input = flow_context.resolve_value(node.data.as_ref()).map_err(|e| {
         WorkflowError::RuntimeError(format!("Input resolution failed for {}: {}", node_id, e))
     })?;
+    let resolved_data = Arc::new(resolved_input);
 
     let executor = executors
         .get(&node_type)
@@ -438,18 +445,19 @@ async fn spawn_node_execution(
             WorkflowError::RuntimeError(format!("No executor for type: {}", node_type))
         })?;
 
-    let node_data = Arc::clone(&node.data);
     let ctx = NodeContext {
         node: node.clone(),
         flow_context: Arc::clone(&flow_context),
         event_bus: event_bus.clone(),
+        resolved_data: Arc::clone(&resolved_data),
     };
     event_bus.emit(WorkflowEvent::NodeStarted {
         node_id: node_id.clone(),
         node_type: node_type.clone(),
-        data: Arc::clone(&node_data),
-        input: Arc::new(resolved_input),
+        data: Arc::clone(&resolved_data),
     });
+    // 让出 CPU 时间片，确保 NodeStarted 事件能被订阅者及时处理
+    tokio::task::yield_now().await;
 
     if spawn {
         tokio::spawn(run_executor(
@@ -457,12 +465,12 @@ async fn spawn_node_execution(
             ctx,
             node_id,
             node_type,
-            node_data,
+            resolved_data,
             event_bus,
             tx,
         ));
     } else {
-        run_executor(executor, ctx, node_id, node_type, node_data, event_bus, tx).await;
+        run_executor(executor, ctx, node_id, node_type, resolved_data, event_bus, tx).await;
     }
     Ok(())
 }
@@ -488,6 +496,8 @@ async fn run_executor(
                 output: Arc::clone(&output),
                 duration_ms: duration,
             });
+            // 让出 CPU 时间片，确保 NodeCompleted 事件能被订阅者及时处理
+            tokio::task::yield_now().await;
             let _ = tx.send(ActorMessage::NodeCompleted { node_id, output });
         }
         Err(e) => {
@@ -498,6 +508,8 @@ async fn run_executor(
                 error: e.to_string(),
                 strategy: "fail".to_string(),
             });
+            // 让出 CPU 时间片，确保 NodeError 事件能被订阅者及时处理
+            tokio::task::yield_now().await;
             let _ = tx.send(ActorMessage::NodeFailed {
                 node_id,
                 error: e.to_string(),

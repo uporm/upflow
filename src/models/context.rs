@@ -56,6 +56,7 @@ pub struct NodeContext {
     pub node: Node,
     pub flow_context: Arc<FlowContext>,
     pub event_bus: EventBus,
+    pub resolved_data: Arc<Value>,
 }
 
 impl NodeContext {
@@ -63,7 +64,7 @@ impl NodeContext {
         self.event_bus.emit(WorkflowEvent::NodeMessage {
             node_id: self.node.id.clone(),
             node_type: self.node.node_type.clone(),
-            data: Arc::clone(&self.node.data),
+            data: Arc::clone(&self.resolved_data),
             message: Arc::new(message.into()),
         });
     }

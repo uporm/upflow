@@ -1,20 +1,18 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::models::workflow::FlowStatus;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WorkflowEvent {
     FlowStarted {
-        input: Arc<Value>,
+        payload: Arc<Value>,
         timestamp: DateTime<Utc>,
     },
     NodeStarted {
         node_id: String,
         node_type: String,
         data: Arc<Value>,
-        input: Arc<Value>,
     },
     NodeCompleted {
         node_id: String,
@@ -37,7 +35,6 @@ pub enum WorkflowEvent {
         strategy: String,
     },
     FlowFinished {
-        status: FlowStatus,
         output: Option<Arc<Value>>,
         duration_ms: u64,
     },
