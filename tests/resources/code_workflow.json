@@ -1,0 +1,81 @@
+{
+  "nodes": [
+    {
+      "id": "node-start",
+      "type": "start",
+      "data": {
+        "input": [
+          {
+            "name": "username",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required"
+              }
+            ]
+          },{
+            "name": "sex",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "node-code",
+      "type": "code",
+      "data": {
+        "input": [
+          {
+            "name": "arg1",
+            "value": "{{node-start.username}}"
+          }, {
+            "name": "arg2",
+            "value": "{{node-start.sex}}"
+          }
+        ],
+        "code": "var output1 = arg1 + ' ' + arg2;",
+        "output": [
+          {
+            "name": "output1",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required"
+              }
+            ]
+          },{
+            "name": "output2",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "node-output",
+      "type": "output",
+      "data": {
+        "out1": "{{node-code.output1}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "node-start",
+      "target": "node-code"
+    },
+    {
+      "source": "node-code",
+      "target": "node-output"
+    }
+  ]
+}

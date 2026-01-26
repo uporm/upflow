@@ -1,0 +1,72 @@
+{
+  "nodes": [
+    {
+      "id": "node-start",
+      "type": "start",
+      "data": {
+        "input": [
+          {
+            "name": "message",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "node-print",
+      "type": "print",
+      "data": {
+        "input": [
+          {
+            "name": "message",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required"
+              }
+            ]
+          }
+        ],
+        "output1": [
+          {
+            "name": "message",
+            "type": "STRING",
+            "rules": [
+              {
+                "type": "required"
+              }
+            ]
+          }
+        ]
+      }
+    },{
+      "id": "node-http",
+      "type": "http",
+      "data": {
+        "print_content": "{{node-start.message}}"
+      }
+    },
+    {
+      "id": "node-output",
+      "type": "output",
+      "data": {
+        "final_result": "{{node-print.print_content}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "node-start",
+      "target": "node-print"
+    },
+    {
+      "source": "node-print",
+      "target": "node-output"
+    }
+  ]
+}
