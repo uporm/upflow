@@ -87,11 +87,34 @@ async fn test_workflow_with_event_listener() {
     // 验证关键事件是否存在
     
     // 检查 FlowStarted
-    let has_flow_started = collected_events.iter().any(|e| matches!(e, WorkflowEvent::FlowStarted { .. }));
+    let has_flow_started = collected_events
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::FlowStarted { .. }));
     assert!(has_flow_started, "缺少 FlowStarted 事件");
+
+    let flow_started_nodes = collected_events
+        .iter()
+        .find_map(|e| {
+            if let WorkflowEvent::FlowStarted { nodes, .. } = e {
+                Some(nodes.clone())
+            } else {
+                None
+            }
+        })
+        .expect("缺少 FlowStarted 节点列表");
+    let flow_started_ids: Vec<String> = flow_started_nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect();
+    assert_eq!(
+        flow_started_ids,
+        vec!["node-start".to_string(), "node-print".to_string()]
+    );
     
     // 检查 FlowFinished
-    let has_flow_finished = collected_events.iter().any(|e| matches!(e, WorkflowEvent::FlowFinished { .. }));
+    let has_flow_finished = collected_events
+        .iter()
+        .any(|e| matches!(e, WorkflowEvent::FlowFinished { .. }));
     assert!(has_flow_finished, "缺少 FlowFinished 事件");
 
     // 检查节点事件

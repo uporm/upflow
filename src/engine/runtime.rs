@@ -164,8 +164,10 @@ impl WorkflowActor {
         self.instance_id = Id::next_id().unwrap_or(0);
 
         // 发送工作流开始事件，通知监听者工作流已启动
+        let nodes = self.graph.topological_nodes()?;
         self.event_bus.emit(WorkflowEvent::FlowStarted {
             payload: Arc::new(self.flow_context.payload.clone()),
+            nodes: Arc::new(nodes),
             timestamp: Utc::now(),
         });
 

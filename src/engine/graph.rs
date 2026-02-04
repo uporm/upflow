@@ -1,6 +1,6 @@
 use crate::models::error::WorkflowError;
 use crate::models::workflow::{Edge, Node, Workflow};
-use petgraph::algo::is_cyclic_directed;
+use petgraph::algo::{is_cyclic_directed, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::Direction;
 use std::collections::HashMap;
@@ -10,6 +10,7 @@ use std::collections::HashMap;
 pub struct WorkflowGraph {
     pub dag: DiGraph<Node, Edge>, // 使用petgraph的有向无环图存储节点和边
     pub node_map: HashMap<String, NodeIndex>, // 节点ID到图索引的映射，便于快速查找
+    pub topo_nodes: Vec<Node>,
 }
 
 impl WorkflowGraph {
@@ -18,6 +19,7 @@ impl WorkflowGraph {
         Self {
             dag: DiGraph::new(),      // 初始化空的有向无环图
             node_map: HashMap::new(), // 初始化空的节点映射表
+            topo_nodes: Vec::new(),
         }
     }
 
@@ -82,7 +84,15 @@ impl WorkflowGraph {
             )));
         }
 
+        let order = toposort(&self.dag, None).map_err(|_| {
+            WorkflowError::InvalidGraph("Workflow contains cycle detected".to_string())
+        })?;
+        self.topo_nodes = order.into_iter().map(|idx| self.dag[idx].clone()).collect();
         Ok(())
+    }
+
+    pub fn topological_nodes(&self) -> Result<Vec<Node>, WorkflowError> {
+        Ok(self.topo_nodes.clone())
     }
 
     // 辅助方法：计算没有特定方向边的节点数量
