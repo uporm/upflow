@@ -6,7 +6,6 @@ use crate::models::event::WorkflowEvent;
 use crate::models::event_bus::EventBus;
 use crate::models::workflow::{FlowStatus, WorkflowResult};
 use crate::nodes::NodeExecutor;
-use crate::utils::id::Id;
 use chrono::Utc;
 use dashmap::DashMap;
 use petgraph::visit::EdgeRef;
@@ -14,7 +13,7 @@ use petgraph::Direction;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// 工作流调度器
 /// 负责管理节点执行器并调度工作流的执行过程
@@ -46,11 +45,15 @@ impl WorkflowRuntime {
     /// - `flow_context`: 流程上下文，包含输入和变量
     /// - `event_bus`: 事件总线，用于发送工作流事件
     /// - `workflow_graph`: 工作流图结构
+    /// - `instance_id`: 工作流实例ID
+    /// - `cancel_rx`: 取消信号接收器
     pub async fn execute(
         &self,
         flow_context: Arc<FlowContext>,
         event_bus: EventBus,
         workflow_graph: Arc<WorkflowGraph>,
+        instance_id: u64,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Result<WorkflowResult, WorkflowError> {
         // 使用无界通道避免死锁，符合 Actor 模型常见实践
         let (tx, rx) = mpsc::unbounded_channel::<ActorMessage>();
@@ -61,6 +64,8 @@ impl WorkflowRuntime {
             flow_context,
             event_bus,
             tx,
+            instance_id,
+            cancel_rx,
         );
 
         actor.run(rx).await
@@ -79,6 +84,7 @@ struct WorkflowActor {
     pending_count: usize,
     active_incoming: HashMap<String, usize>,
     instance_id: u64,
+    cancel_rx: watch::Receiver<bool>,
 }
 
 impl WorkflowActor {
@@ -88,6 +94,8 @@ impl WorkflowActor {
         flow_context: Arc<FlowContext>,
         event_bus: EventBus,
         tx: mpsc::UnboundedSender<ActorMessage>,
+        instance_id: u64,
+        cancel_rx: watch::Receiver<bool>,
     ) -> Self {
         Self {
             graph,
@@ -98,7 +106,8 @@ impl WorkflowActor {
             remaining_dependencies: HashMap::new(),
             active_incoming: HashMap::new(),
             pending_count: 0,
-            instance_id: 0,
+            instance_id,
+            cancel_rx,
         }
     }
 
@@ -160,12 +169,16 @@ impl WorkflowActor {
         rx: mpsc::UnboundedReceiver<ActorMessage>,
     ) -> Result<WorkflowResult, WorkflowError> {
         let start_time = std::time::Instant::now();
-        // 生成唯一的工作流实例 ID
-        self.instance_id = Id::next_id().unwrap_or(0);
+        
+        // 检查是否已被取消
+        if *self.cancel_rx.borrow() {
+            return Err(WorkflowError::Cancelled);
+        }
 
         // 发送工作流开始事件，通知监听者工作流已启动
         let nodes = self.graph.topological_nodes()?;
         self.event_bus.emit(WorkflowEvent::FlowStarted {
+            instance_id: self.instance_id.to_string(),
             payload: Arc::new(self.flow_context.payload.clone()),
             nodes: Arc::new(nodes),
             timestamp: Utc::now(),
@@ -195,12 +208,21 @@ impl WorkflowActor {
         // 处理节点间的消息交互，直到所有节点完成或发生错误
         if let Err(e) = self.process_messages(rx).await {
             let duration_ms = start_time.elapsed().as_millis() as u64;
-            // 如果处理消息时发生错误，发送失败事件并返回错误
-            self.event_bus.emit(WorkflowEvent::FlowFinished {
-                output: None,
-                duration_ms,
-            });
-            // 让出 CPU 时间片，确保 FlowFinished 事件能被订阅者及时处理
+
+            if matches!(e, WorkflowError::Cancelled) {
+                self.event_bus.emit(WorkflowEvent::FlowStopped {
+                    instance_id: self.instance_id.to_string(),
+                    timestamp: Utc::now(),
+                });
+            } else {
+                // 如果处理消息时发生错误，发送失败事件并返回错误
+                self.event_bus.emit(WorkflowEvent::FlowFinished {
+                    output: None,
+                    duration_ms,
+                });
+            }
+
+            // 让出 CPU 时间片，确保事件能被订阅者及时处理
             tokio::task::yield_now().await;
             return Err(e);
         }
@@ -262,10 +284,21 @@ impl WorkflowActor {
     ) -> Result<(), WorkflowError> {
         // 持续处理消息直到没有待处理的节点
         while self.pending_count > 0 {
-            let msg = match rx.recv().await {
-                Some(msg) => msg,
-                None => break,
+            let msg = tokio::select! {
+                _ = self.cancel_rx.changed() => {
+                    if *self.cancel_rx.borrow() {
+                        return Err(WorkflowError::Cancelled);
+                    }
+                    continue;
+                }
+                msg = rx.recv() => {
+                    match msg {
+                        Some(msg) => msg,
+                        None => break,
+                    }
+                }
             };
+            
             match msg {
                 ActorMessage::Execute { node_id, spawn } => {
                     // 处理执行消息，启动指定节点的执行

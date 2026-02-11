@@ -7,9 +7,11 @@ use crate::models::error::WorkflowError;
 use crate::models::event_bus::EventBus;
 use crate::models::workflow::{Workflow, WorkflowResult};
 use crate::nodes::{DecisionNode, GroupNode, NodeExecutor, StartNode, SubflowNode};
+use crate::utils::id::Id;
 use dashmap::DashMap;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
+use tokio::sync::watch;
 
 static INSTANCE: OnceLock<WorkflowEngine> = OnceLock::new();
 
@@ -20,6 +22,7 @@ pub struct WorkflowEngine {
     workflow_runtime: WorkflowRuntime,                    // 工作流运行时环境
     workflow_hashes: DashMap<String, String>,             // 工作流ID到其内容哈希值的映射
     subflows_map: DashMap<String, Vec<String>>,           // 主工作流ID到其子工作流ID列表的映射
+    cancellation_senders: DashMap<String, watch::Sender<bool>>, // 运行实例ID到取消信号发送器的映射
 }
 
 impl WorkflowEngine {
@@ -39,9 +42,11 @@ impl WorkflowEngine {
                 workflow_runtime: runtime, // 初始化运行时环境
                 workflow_hashes: DashMap::new(),
                 subflows_map: DashMap::new(),
+                cancellation_senders: DashMap::new(),
             }
         })
     }
+
 
     pub fn register(&self, node_type: &str, executor: impl NodeExecutor + 'static) {
         self.workflow_runtime.register(node_type, executor);
@@ -126,6 +131,20 @@ impl WorkflowEngine {
         flow_context: Arc<FlowContext>,
         event_bus: EventBus,
     ) -> Result<WorkflowResult, WorkflowError> {
+        // 生成实例ID
+        let instance_id = Id::next_id()?;
+        self.run_with_instance_id(instance_id, workflow_id, flow_context, event_bus).await
+    }
+
+    // 使用指定的实例ID运行工作流
+    // 允许调用者控制实例ID，以便在运行时终止工作流
+    pub async fn run_with_instance_id(
+        &self,
+        instance_id: u64,
+        workflow_id: &str,
+        flow_context: Arc<FlowContext>,
+        event_bus: EventBus,
+    ) -> Result<WorkflowResult, WorkflowError> {
         // 获取对应的工作流图
         let graph = {
             self.workflow_graphs
@@ -134,10 +153,31 @@ impl WorkflowEngine {
                 .ok_or_else(|| WorkflowError::WorkflowNotFound(workflow_id.to_string()))?
         };
 
+        let instance_id_str = instance_id.to_string();
+
+        // 创建取消信号通道
+        let (tx, rx) = watch::channel(false);
+        self.cancellation_senders.insert(instance_id_str.clone(), tx);
+
         // 通过运行时环境执行工作流
-        self.workflow_runtime
-            .execute(flow_context, event_bus, graph)
-            .await
+        let result = self.workflow_runtime
+            .execute(flow_context, event_bus, graph, instance_id, rx)
+            .await;
+
+        // 清理取消信号发送器
+        self.cancellation_senders.remove(&instance_id_str);
+
+        result
+    }
+
+    // 手动终止指定的工作流实例
+    pub fn stop(&self, instance_id: &str) -> bool {
+        if let Some(sender) = self.cancellation_senders.get(instance_id) {
+            let _ = sender.send(true);
+            true
+        } else {
+            false
+        }
     }
 
     // 构建工作流图并将其保存到缓存中

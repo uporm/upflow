@@ -12,8 +12,8 @@ struct PrintNode;
 impl NodeExecutor for PrintNode {
     async fn execute(&self, ctx: NodeContext) -> Result<Value, WorkflowError> {
         // 解析数据（包含变量如 ${node-start.message}）
-        // 注意：ctx.node.data 是 Arc<Value>，所以我们使用 as_ref()
-        let resolved = ctx.flow_context.resolve_value(ctx.node.data.as_ref())?;
+        // 上下文中的 resolved_data 已经是解析后的 Value (Arc<Value>)
+        let resolved = &ctx.resolved_data;
 
         // 在实际打印节点中，我们可能会打印到标准输出或日志
         println!("PrintNode 线程号: {:?}", thread::current().id());
@@ -24,7 +24,7 @@ impl NodeExecutor for PrintNode {
         }
 
         // 返回解析的数据作为输出，供下游节点使用
-        Ok(resolved)
+        Ok(resolved.as_ref().clone())
     }
 }
 
@@ -33,10 +33,10 @@ struct OutputNode;
 #[async_trait]
 impl NodeExecutor for OutputNode {
     async fn execute(&self, ctx: NodeContext) -> Result<Value, WorkflowError> {
-        let resolved = ctx.flow_context.resolve_value(ctx.node.data.as_ref())?;
+        let resolved = &ctx.resolved_data;
         println!("OutputNode 线程号: {:?}", thread::current().id());
         println!("OutputNode resolved: {:?}", resolved);
-        Ok(resolved)
+        Ok(resolved.as_ref().clone())
     }
 }
 

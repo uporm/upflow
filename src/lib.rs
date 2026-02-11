@@ -1,7 +1,7 @@
-//! uflow - 异步工作流引擎
+//! upflow - 异步工作流引擎
 //!
 //! # 概述
-//! uflow 是一个基于 Rust 的异步工作流引擎，旨在提供高效、可靠的工作流执行能力。
+//! upflow 是一个基于 Rust 的异步工作流引擎，旨在提供高效、可靠的工作流执行能力。
 //! 它使用有向无环图 (DAG) 来表示工作流，并支持复杂的节点类型和执行策略。
 //!
 //! # 核心模块
@@ -22,6 +22,6 @@ pub(crate) mod core;
 pub(crate) mod engine;
 pub(crate) mod models;
 pub(crate) mod nodes;
-pub(crate) mod utils;
+pub mod utils;
 
 pub mod prelude;
