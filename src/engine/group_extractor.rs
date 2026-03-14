@@ -1,5 +1,4 @@
-use crate::core::constants::GROUP_FLOW_ID_KEY;
-use crate::core::enums::NodeType;
+use crate::core::constants::{GROUP_FLOW_ID_KEY, GROUP_NODE_PREFIX};
 use crate::models::workflow::{Edge, Node, Workflow};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -13,18 +12,12 @@ pub fn split_workflow_for_groups(
     let Workflow { nodes, edges, .. } = workflow;
     let mut group_ids = HashSet::new();
     for node in &nodes {
-        if node.node_type == NodeType::Group.to_str() {
+        if node.node_type.starts_with(GROUP_NODE_PREFIX) {
             group_ids.insert(node.id.clone());
         }
     }
     if group_ids.is_empty() {
-        return (
-            Workflow {
-                nodes,
-                edges,
-            },
-            Vec::new(),
-        );
+        return (Workflow { nodes, edges }, Vec::new());
     }
 
     let mut group_children: HashMap<String, Vec<Node>> = HashMap::new();
@@ -74,10 +67,7 @@ pub fn split_workflow_for_groups(
             attach_subflow_id(node, workflow_id);
         }
         let edges = group_edges.remove(&group_id).unwrap_or_default();
-        let subflow = Workflow {
-            nodes,
-            edges,
-        };
+        let subflow = Workflow { nodes, edges };
         subflows.push((subflow_id, subflow));
     }
 
@@ -91,7 +81,7 @@ pub fn split_workflow_for_groups(
 }
 
 fn attach_subflow_id(node: &mut Node, workflow_id: &str) {
-    if node.node_type != "group" {
+    if !node.node_type.starts_with(GROUP_NODE_PREFIX) {
         return;
     }
     let subflow_id = format!("{}_{}", workflow_id, node.id);

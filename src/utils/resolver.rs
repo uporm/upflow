@@ -1,9 +1,9 @@
+use crate::models::context::FlowContext;
+use crate::models::error::WorkflowError;
+use regex::Regex;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use regex::Regex;
-use serde_json::{json, Value};
-use crate::models::error::WorkflowError;
-use crate::models::context::FlowContext;
 
 pub fn resolve_value(ctx: &FlowContext, value: &Value) -> Result<Value, WorkflowError> {
     match value {
@@ -84,7 +84,11 @@ fn resolve_variable(ctx: &FlowContext, expr: &str) -> Result<Value, WorkflowErro
             if tail.is_empty() {
                 Ok(json!({}))
             } else {
-                Ok(ctx.env.get(tail).cloned().unwrap_or(Value::Null))
+                Ok(ctx
+                    .env
+                    .get(tail)
+                    .map(|v| v.value().clone())
+                    .unwrap_or(Value::Null))
             }
         }
         _ => {

@@ -1,8 +1,8 @@
 use crate::models::error::WorkflowError;
 use crate::models::workflow::{Edge, Node, Workflow};
+use petgraph::Direction;
 use petgraph::algo::{is_cyclic_directed, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
-use petgraph::Direction;
 use std::collections::HashMap;
 
 // 工作流图结构体

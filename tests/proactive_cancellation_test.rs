@@ -1,10 +1,10 @@
-use upflow::prelude::*;
-use upflow::utils::id::Id;
-use std::time::Duration;
-use tokio::time::sleep;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
+use upflow::prelude::*;
+use upflow::utils::id::Id;
 
 struct SleepNode;
 
@@ -32,31 +32,33 @@ async fn test_workflow_proactive_cancellation() {
             { "source": "sleep1", "target": "end" }
         ]
     }"#;
-    
+
     let workflow_id = "proactive_cancel_flow";
     engine.load(workflow_id, workflow_json).unwrap();
-    
+
     // Create an ID beforehand
     let instance_id = Id::next_id().unwrap();
     let instance_id_str = instance_id.to_string();
-    
+
     // Spawn execution
     let handle = tokio::spawn(async move {
-        engine.run_with_instance_id(
-            instance_id,
-            workflow_id, 
-            Arc::new(FlowContext::new()), 
-            EventBus::default()
-        ).await
+        engine
+            .run_with_instance_id(
+                instance_id,
+                workflow_id,
+                Arc::new(FlowContext::new()),
+                EventBus::default(),
+            )
+            .await
     });
-    
+
     // Wait a bit then cancel using the known ID
     sleep(Duration::from_millis(100)).await;
     let success = engine.stop(&instance_id_str);
     assert!(success, "Termination request should return true");
-    
+
     let result = handle.await.expect("Task failed");
-    
+
     match result {
         Err(WorkflowError::Cancelled) => println!("Workflow cancelled successfully"),
         Ok(_) => panic!("Workflow should have been cancelled"),

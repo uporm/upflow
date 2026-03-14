@@ -76,7 +76,7 @@ async fn test_parallel_workflow() {
     });
 
     let start_time = std::time::Instant::now();
-    
+
     let payload = serde_json::json!({
         "msg_a": "Branch A Start",
         "sleep_a": 100,

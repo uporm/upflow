@@ -1,4 +1,3 @@
-use crate::core::enums::NodeType;
 use crate::engine::graph::WorkflowGraph;
 use crate::engine::group_extractor::split_workflow_for_groups;
 use crate::engine::runtime::WorkflowRuntime;
@@ -23,6 +22,7 @@ pub struct WorkflowEngine {
     workflow_hashes: DashMap<String, String>,             // 工作流ID到其内容哈希值的映射
     subflows_map: DashMap<String, Vec<String>>,           // 主工作流ID到其子工作流ID列表的映射
     cancellation_senders: DashMap<String, watch::Sender<bool>>, // 运行实例ID到取消信号发送器的映射
+    running_contexts: DashMap<String, Arc<FlowContext>>,  // 运行实例ID到FlowContext的映射
 }
 
 impl WorkflowEngine {
@@ -32,10 +32,10 @@ impl WorkflowEngine {
         INSTANCE.get_or_init(|| {
             let runtime = WorkflowRuntime::new();
             // 注册内置节点执行器
-            runtime.register(NodeType::Start.to_str(), StartNode);
-            runtime.register(NodeType::Decision.to_str(), DecisionNode);
-            runtime.register(NodeType::Subflow.to_str(), SubflowNode);
-            runtime.register(NodeType::Group.to_str(), GroupNode);
+            runtime.register("start", StartNode);
+            runtime.register("decision", DecisionNode);
+            runtime.register("subflow", SubflowNode);
+            runtime.register("group", GroupNode);
 
             WorkflowEngine {
                 workflow_graphs: DashMap::new(),
@@ -43,10 +43,10 @@ impl WorkflowEngine {
                 workflow_hashes: DashMap::new(),
                 subflows_map: DashMap::new(),
                 cancellation_senders: DashMap::new(),
+                running_contexts: DashMap::new(),
             }
         })
     }
-
 
     pub fn register(&self, node_type: &str, executor: impl NodeExecutor + 'static) {
         self.workflow_runtime.register(node_type, executor);
@@ -133,7 +133,8 @@ impl WorkflowEngine {
     ) -> Result<WorkflowResult, WorkflowError> {
         // 生成实例ID
         let instance_id = Id::next_id()?;
-        self.run_with_instance_id(instance_id, workflow_id, flow_context, event_bus).await
+        self.run_with_instance_id(instance_id, workflow_id, flow_context, event_bus)
+            .await
     }
 
     // 使用指定的实例ID运行工作流
@@ -155,19 +156,40 @@ impl WorkflowEngine {
 
         let instance_id_str = instance_id.to_string();
 
+        // 注册 FlowContext
+        self.running_contexts
+            .insert(instance_id_str.clone(), flow_context.clone());
+
         // 创建取消信号通道
         let (tx, rx) = watch::channel(false);
-        self.cancellation_senders.insert(instance_id_str.clone(), tx);
+        self.cancellation_senders
+            .insert(instance_id_str.clone(), tx);
 
         // 通过运行时环境执行工作流
-        let result = self.workflow_runtime
+        let result = self
+            .workflow_runtime
             .execute(flow_context, event_bus, graph, instance_id, rx)
             .await;
 
-        // 清理取消信号发送器
+        // 清理取消信号发送器和 FlowContext
         self.cancellation_senders.remove(&instance_id_str);
+        self.running_contexts.remove(&instance_id_str);
 
         result
+    }
+
+    // 更新指定工作流实例的 FlowContext 环境变量
+    // 只能更新 key 为 session. 为前缀的值
+    pub fn update_flow_env(&self, instance_id: &str, key: &str, value: serde_json::Value) -> Result<(), WorkflowError> {
+        if !key.starts_with("session.") {
+            return Err(WorkflowError::RuntimeError("Only keys starting with 'session.' prefix can be updated".to_string()));
+        }
+
+        if let Some(ctx) = self.running_contexts.get(instance_id) {
+            ctx.update_environment(key, value)
+        } else {
+            Err(WorkflowError::RuntimeError(format!("Workflow instance {} not found", instance_id)))
+        }
     }
 
     // 手动终止指定的工作流实例
@@ -203,4 +225,89 @@ fn compute_hash(raw: &str) -> String {
     hasher.update(raw.as_bytes());
     let out = hasher.finalize();
     hex::encode(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::context::FlowContext;
+    use crate::models::event_bus::EventBus;
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::time::{sleep, Duration};
+    use crate::models::context::NodeContext;
+
+    struct SleepNode;
+    #[async_trait::async_trait]
+    impl NodeExecutor for SleepNode {
+        async fn execute(&self, _ctx: NodeContext) -> Result<serde_json::Value, WorkflowError> {
+            sleep(Duration::from_millis(100)).await;
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_flow_env_cross_workflow() {
+        let engine = WorkflowEngine::global();
+        engine.register("sleep", SleepNode);
+        
+        let workflow_id = "sleep_workflow";
+        let workflow_json = json!({
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "start",
+                    "data": {}
+                },
+                {
+                    "id": "sleep_node",
+                    "type": "sleep",
+                    "data": {}
+                }
+            ],
+            "edges": [
+                {
+                    "source": "start",
+                    "target": "sleep_node"
+                }
+            ]
+        }).to_string();
+        
+        engine.load(workflow_id, &workflow_json).unwrap();
+        
+        let ctx = Arc::new(FlowContext::new());
+        let ctx_check = ctx.clone();
+        
+        let instance_id = 12345;
+        let instance_id_str = instance_id.to_string();
+        
+        // Clone for move into task
+        let engine_clone = engine; 
+        // Note: WorkflowEngine::global() returns static ref so cloning is cheap/pointless but safe
+        
+        let handle = tokio::spawn(async move {
+            engine_clone.run_with_instance_id(instance_id, workflow_id, ctx, EventBus::default()).await
+        });
+        
+        // Give it a moment to start
+        sleep(Duration::from_millis(20)).await;
+        
+        // Update the env while running
+        let update_result = engine.update_flow_env(&instance_id_str, "session.user", json!("admin"));
+        assert!(update_result.is_ok(), "Failed to update env: {:?}", update_result.err());
+        
+        // Update disallowed key
+        let update_fail = engine.update_flow_env(&instance_id_str, "system.config", json!("fail"));
+        assert!(update_fail.is_err());
+        
+        // Wait for finish
+        let _ = handle.await.unwrap();
+        
+        // Verify update persisted
+        assert_eq!(ctx_check.env.get("session.user").map(|v| v.value().clone()), Some(json!("admin")));
+        
+        // Verify context removed after finish
+        let update_after = engine.update_flow_env(&instance_id_str, "session.late", json!("too_late"));
+        assert!(update_after.is_err());
+    }
 }

@@ -67,7 +67,7 @@ async fn test_simple_workflow() {
         "message": "Hello from Start Node"
     });
     let flow_context = Arc::new(FlowContext::new().with_payload(payload));
-    
+
     let result = engine
         .run_with_ctx(workflow_id, flow_context)
         .await

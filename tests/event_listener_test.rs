@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use serde_json::json;
 use serde_json::Value;
+use serde_json::json;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -55,7 +55,7 @@ async fn test_workflow_with_event_listener() {
         while let Ok(event) = rx.recv().await {
             println!("收到事件: {:?}", event);
             events_clone.lock().unwrap().push(event.clone());
-            
+
             // 如果是 FlowFinished 事件，我们可以退出循环
             if let WorkflowEvent::FlowFinished { .. } = event {
                 break;
@@ -80,12 +80,12 @@ async fn test_workflow_with_event_listener() {
 
     // 7. 验证结果
     assert_eq!(result.status, FlowStatus::Succeeded);
-    
+
     let collected_events = events.lock().unwrap();
     println!("总共收到 {} 个事件", collected_events.len());
 
     // 验证关键事件是否存在
-    
+
     // 检查 FlowStarted
     let has_flow_started = collected_events
         .iter()
@@ -110,7 +110,7 @@ async fn test_workflow_with_event_listener() {
         flow_started_ids,
         vec!["node-start".to_string(), "node-print".to_string()]
     );
-    
+
     // 检查 FlowFinished
     let has_flow_finished = collected_events
         .iter()
@@ -119,11 +119,23 @@ async fn test_workflow_with_event_listener() {
 
     // 检查节点事件
     // 应该有两个节点启动 (start, print) 和两个节点完成
-    let node_started_count = collected_events.iter().filter(|e| matches!(e, WorkflowEvent::NodeStarted { .. })).count();
-    let node_completed_count = collected_events.iter().filter(|e| matches!(e, WorkflowEvent::NodeCompleted { .. })).count();
-    
-    assert_eq!(node_started_count, 2, "应该有两个节点启动事件 (start, print)");
-    assert_eq!(node_completed_count, 2, "应该有两个节点完成事件 (start, print)");
+    let node_started_count = collected_events
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeStarted { .. }))
+        .count();
+    let node_completed_count = collected_events
+        .iter()
+        .filter(|e| matches!(e, WorkflowEvent::NodeCompleted { .. }))
+        .count();
+
+    assert_eq!(
+        node_started_count, 2,
+        "应该有两个节点启动事件 (start, print)"
+    );
+    assert_eq!(
+        node_completed_count, 2,
+        "应该有两个节点完成事件 (start, print)"
+    );
 
     // 验证特定节点的事件顺序（简单的检查）
     // 确保 start 节点先于 print 节点

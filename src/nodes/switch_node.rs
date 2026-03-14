@@ -2,7 +2,7 @@ use crate::models::context::NodeContext;
 use crate::models::error::WorkflowError;
 use crate::nodes::NodeExecutor;
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct DecisionNode;
 
@@ -14,31 +14,34 @@ impl NodeExecutor for DecisionNode {
             .get("cases")
             .or_else(|| resolved_input.get("branches"))
             .and_then(|v| v.as_array());
-        
+
         if let Some(branches) = branches {
             for branch in branches {
                 let conditions = branch.get("conditions").and_then(|v| v.as_array());
-                let logic = branch.get("logic").and_then(|v| v.as_str()).unwrap_or("and");
-                
+                let logic = branch
+                    .get("logic")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("and");
+
                 if let Some(conds) = conditions {
                     // Logic: "and" (all match) or "or" (any match)
                     let mut is_match = logic != "or";
-                    
+
                     if conds.is_empty() {
-                         // Empty conditions:
-                         // if logic is "and", usually means true (vacuously true).
-                         // if logic is "or", usually means false.
-                         // But for a decision branch, if no conditions are specified, maybe it shouldn't match?
-                         // However, keeping consistent with boolean algebra:
-                         // AND [] -> true
-                         // OR [] -> false
-                         // Let's stick to the initialization values.
+                        // Empty conditions:
+                        // if logic is "and", usually means true (vacuously true).
+                        // if logic is "or", usually means false.
+                        // But for a decision branch, if no conditions are specified, maybe it shouldn't match?
+                        // However, keeping consistent with boolean algebra:
+                        // AND [] -> true
+                        // OR [] -> false
+                        // Let's stick to the initialization values.
                     } else {
                         for cond in conds {
                             let var = cond.get("var").and_then(|v| v.as_str()).unwrap_or("");
                             let opr = cond.get("opr").and_then(|v| v.as_str()).unwrap_or("eq");
                             let value = cond.get("value").and_then(|v| v.as_str()).unwrap_or("");
-                            
+
                             let result = match opr {
                                 "eq" => var == value,
                                 "ne" => var != value,
@@ -78,11 +81,14 @@ impl NodeExecutor for DecisionNode {
                 }
             }
         }
-        
+
         // Default case
         let else_branch = resolved_input.get("else");
         let default_handle = if let Some(else_branch) = else_branch {
-            else_branch.get("handle").and_then(|v| v.as_str()).unwrap_or("default")
+            else_branch
+                .get("handle")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
         } else {
             "default"
         };
@@ -106,25 +112,25 @@ mod tests {
     async fn test_decision_node_in_opr() {
         let node_executor = DecisionNode;
         let data = json!({
-            "title": "条件分支", 
-            "branches": [ 
-            { 
-                "logic": "and", 
-                "conditions": [ 
-                { 
+            "title": "条件分支",
+            "branches": [
+            {
+                "logic": "and",
+                "conditions": [
+                {
                     "var": "张三", // Simulated resolved value
-                    "opr": "in", 
-                    "value": "张三" 
-                } 
-                ], 
-                "handle": "zhangsan" 
-            } 
-            ], 
-            "default": { 
-                "handle": "default" 
-            } 
+                    "opr": "in",
+                    "value": "张三"
+                }
+                ],
+                "handle": "zhangsan"
+            }
+            ],
+            "default": {
+                "handle": "default"
+            }
         });
-        
+
         let node = Node {
             id: "decision_node".to_string(),
             node_type: "decision".to_string(),
@@ -149,25 +155,25 @@ mod tests {
     async fn test_decision_node_default() {
         let node_executor = DecisionNode;
         let data = json!({
-            "title": "条件分支", 
-            "branches": [ 
-            { 
-                "logic": "and", 
-                "conditions": [ 
-                { 
-                    "var": "李四", 
-                    "opr": "in", 
-                    "value": "张三" 
-                } 
-                ], 
-                "handle": "zhangsan" 
-            } 
-            ], 
-            "default": { 
-                "handle": "default" 
-            } 
+            "title": "条件分支",
+            "branches": [
+            {
+                "logic": "and",
+                "conditions": [
+                {
+                    "var": "李四",
+                    "opr": "in",
+                    "value": "张三"
+                }
+                ],
+                "handle": "zhangsan"
+            }
+            ],
+            "default": {
+                "handle": "default"
+            }
         });
-        
+
         let node = Node {
             id: "decision_node".to_string(),
             node_type: "decision".to_string(),

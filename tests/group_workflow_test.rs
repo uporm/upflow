@@ -42,6 +42,7 @@ async fn test_group_workflow() {
     engine.register("print", PrintNode);
     engine.register("output", OutputNode);
     engine.register("end", EndNode);
+    engine.register("group__test", GroupNode);
 
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("tests/resources/group_workflow.json");

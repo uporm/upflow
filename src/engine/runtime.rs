@@ -8,8 +8,8 @@ use crate::models::workflow::{FlowStatus, WorkflowResult};
 use crate::nodes::NodeExecutor;
 use chrono::Utc;
 use dashmap::DashMap;
-use petgraph::visit::EdgeRef;
 use petgraph::Direction;
+use petgraph::visit::EdgeRef;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -169,7 +169,7 @@ impl WorkflowActor {
         rx: mpsc::UnboundedReceiver<ActorMessage>,
     ) -> Result<WorkflowResult, WorkflowError> {
         let start_time = std::time::Instant::now();
-        
+
         // 检查是否已被取消
         if *self.cancel_rx.borrow() {
             return Err(WorkflowError::Cancelled);
@@ -298,7 +298,7 @@ impl WorkflowActor {
                     }
                 }
             };
-            
+
             match msg {
                 ActorMessage::Execute { node_id, spawn } => {
                     // 处理执行消息，启动指定节点的执行
@@ -468,9 +468,11 @@ async fn spawn_node_execution(
     let node_type = node.node_type.clone();
 
     // 解析输入参数
-    let resolved_input = flow_context.resolve_value(node.data.as_ref()).map_err(|e| {
-        WorkflowError::RuntimeError(format!("Input resolution failed for {}: {}", node_id, e))
-    })?;
+    let resolved_input = flow_context
+        .resolve_value(node.data.as_ref())
+        .map_err(|e| {
+            WorkflowError::RuntimeError(format!("Input resolution failed for {}: {}", node_id, e))
+        })?;
     let resolved_data = Arc::new(resolved_input);
 
     let executor = executors
@@ -505,7 +507,16 @@ async fn spawn_node_execution(
             tx,
         ));
     } else {
-        run_executor(executor, ctx, node_id, node_type, resolved_data, event_bus, tx).await;
+        run_executor(
+            executor,
+            ctx,
+            node_id,
+            node_type,
+            resolved_data,
+            event_bus,
+            tx,
+        )
+        .await;
     }
     Ok(())
 }

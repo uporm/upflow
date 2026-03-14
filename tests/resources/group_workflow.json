@@ -14,7 +14,7 @@
     },
     {
       "id": "node-group",
-      "type": "group",
+      "type": "group__test",
       "data": {}
     },
     {
