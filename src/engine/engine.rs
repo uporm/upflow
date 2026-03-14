@@ -178,15 +178,11 @@ impl WorkflowEngine {
         result
     }
 
-    // 更新指定工作流实例的 FlowContext 环境变量
-    // 只能更新 key 为 session. 为前缀的值
-    pub fn update_flow_env(&self, instance_id: &str, key: &str, value: serde_json::Value) -> Result<(), WorkflowError> {
-        if !key.starts_with("session.") {
-            return Err(WorkflowError::RuntimeError("Only keys starting with 'session.' prefix can be updated".to_string()));
-        }
-
+    // 更新指定工作流实例的 FlowContext 会话变量
+    pub fn update_var(&self, instance_id: &str, key: &str, value: serde_json::Value) -> Result<(), WorkflowError> {
         if let Some(ctx) = self.running_contexts.get(instance_id) {
-            ctx.update_environment(key, value)
+            ctx.set_result(key, Arc::new(value));
+            Ok(())
         } else {
             Err(WorkflowError::RuntimeError(format!("Workflow instance {} not found", instance_id)))
         }
@@ -247,7 +243,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_flow_env_cross_workflow() {
+    async fn test_update_var_cross_workflow() {
         let engine = WorkflowEngine::global();
         engine.register("sleep", SleepNode);
         
@@ -293,21 +289,32 @@ mod tests {
         sleep(Duration::from_millis(20)).await;
         
         // Update the env while running
-        let update_result = engine.update_flow_env(&instance_id_str, "session.user", json!("admin"));
+        let update_result = engine.update_var(&instance_id_str, "user", json!("admin"));
         assert!(update_result.is_ok(), "Failed to update env: {:?}", update_result.err());
         
-        // Update disallowed key
-        let update_fail = engine.update_flow_env(&instance_id_str, "system.config", json!("fail"));
-        assert!(update_fail.is_err());
+        // Update arbitrary key
+        let update_fail = engine.update_var(&instance_id_str, "config", json!("fail"));
+        assert!(update_fail.is_ok());
         
         // Wait for finish
         let _ = handle.await.unwrap();
         
         // Verify update persisted
-        assert_eq!(ctx_check.env.get("session.user").map(|v| v.value().clone()), Some(json!("admin")));
+        assert_eq!(
+            ctx_check
+                .get_result("user")
+                .map(|v| v.as_ref().clone()),
+            Some(json!("admin"))
+        );
+        assert_eq!(
+            ctx_check
+                .get_result("config")
+                .map(|v| v.as_ref().clone()),
+            Some(json!("fail"))
+        );
         
         // Verify context removed after finish
-        let update_after = engine.update_flow_env(&instance_id_str, "session.late", json!("too_late"));
+        let update_after = engine.update_var(&instance_id_str, "late", json!("too_late"));
         assert!(update_after.is_err());
     }
 }

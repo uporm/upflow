@@ -24,8 +24,12 @@ impl NodeExecutor for SubflowNode {
             .get("input")
             .cloned()
             .unwrap_or_else(|| ctx.flow_context.payload.clone());
-        let env = ctx.flow_context.env.clone();
-        let subflow_context = Arc::new(FlowContext::new().with_payload(payload).with_env(env));
+        let subflow_context = Arc::new(FlowContext::new().with_payload(payload));
+        for item in &ctx.flow_context.node_results {
+            subflow_context
+                .node_results
+                .insert(item.key().clone(), Arc::clone(item.value()));
+        }
         let result = WorkflowEngine::global()
             .run_with_ctx_event(&subflow_id, subflow_context, ctx.event_bus.clone())
             .await?;

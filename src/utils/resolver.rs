@@ -1,7 +1,7 @@
 use crate::models::context::FlowContext;
 use crate::models::error::WorkflowError;
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -79,25 +79,10 @@ fn resolve_variable(ctx: &FlowContext, expr: &str) -> Result<Value, WorkflowErro
     let mut parts = expr.splitn(2, '.');
     let head = parts.next().unwrap_or("");
     let tail = parts.next().unwrap_or("");
-    match head {
-        "sys" => {
-            if tail.is_empty() {
-                Ok(json!({}))
-            } else {
-                Ok(ctx
-                    .env
-                    .get(tail)
-                    .map(|v| v.value().clone())
-                    .unwrap_or(Value::Null))
-            }
-        }
-        _ => {
-            let base = ctx.get_result(head);
-            match base {
-                Some(value) => Ok(extract_path(value.as_ref(), tail)),
-                None => Ok(Value::Null),
-            }
-        }
+    let base = ctx.get_result(head);
+    match base {
+        Some(value) => Ok(extract_path(value.as_ref(), tail)),
+        None => Ok(Value::Null),
     }
 }
 
@@ -139,4 +124,25 @@ fn placeholder_regex() -> Result<&'static Regex, WorkflowError> {
         .get_or_init(|| Regex::new(r"\{\{\s*([^}]+)\s*}}").map_err(|e| e.to_string()))
         .as_ref()
         .map_err(|e| WorkflowError::RuntimeError(format!("regex error: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::context::FlowContext;
+    use serde_json::json;
+
+    #[test]
+    fn test_resolve_variable_placeholder() {
+        let ctx = FlowContext::new().with_vars(vec![("user_id".to_string(), json!("u-100"))]);
+        let resolved = resolve_value(&ctx, &json!("{{user_id}}")).unwrap();
+        assert_eq!(resolved, json!("u-100"));
+    }
+
+    #[test]
+    fn test_resolve_variable_placeholder_in_string() {
+        let ctx = FlowContext::new().with_vars(vec![("name".to_string(), json!("Jason"))]);
+        let resolved = resolve_value(&ctx, &json!("hello {{name}}")).unwrap();
+        assert_eq!(resolved, json!("hello Jason"));
+    }
 }

@@ -10,7 +10,6 @@ use std::sync::Arc;
 pub struct FlowContext {
     pub payload: Value,
     pub node_results: DashMap<String, Arc<Value>>,
-    pub env: DashMap<String, Value>,
 }
 
 impl Default for FlowContext {
@@ -24,7 +23,6 @@ impl FlowContext {
         Self {
             payload: Value::Null,
             node_results: DashMap::new(),
-            env: DashMap::new(),
         }
     }
 
@@ -33,21 +31,11 @@ impl FlowContext {
         self
     }
 
-    pub fn with_env(mut self, env: impl IntoIterator<Item = (String, Value)>) -> Self {
-        self.env = env.into_iter().collect();
-        self
-    }
-
-    pub fn update_environment(&self, key: &str, value: Value) -> Result<(), WorkflowError> {
-        if key.starts_with("session.") {
-            self.env.insert(key.to_string(), value);
-            Ok(())
-        } else {
-            Err(WorkflowError::RuntimeError(format!(
-                "Cannot update environment variable '{}'. Only variables starting with 'session.' can be updated.",
-                key
-            )))
+    pub fn with_vars(self, vars: impl IntoIterator<Item = (String, Value)>) -> Self {
+        for (key, value) in vars {
+            self.node_results.insert(key, Arc::new(value));
         }
+        self
     }
 
     pub fn set_result(&self, node_id: &str, output: Arc<Value>) {
@@ -98,37 +86,6 @@ mod tests {
     use crate::models::event_bus::EventBus;
     use crate::models::workflow::Node;
     use serde_json::json;
-
-    #[test]
-    fn test_update_environment_allowed() {
-        let ctx = FlowContext::new();
-        let result = ctx.update_environment("session.user_id", json!("12345"));
-        assert!(result.is_ok());
-        assert_eq!(
-            ctx.env.get("session.user_id").map(|v| v.value().clone()),
-            Some(json!("12345"))
-        );
-    }
-
-    #[test]
-    fn test_update_environment_disallowed() {
-        let ctx = FlowContext::new();
-        let result = ctx.update_environment("system.config", json!("value"));
-        assert!(result.is_err());
-        assert!(ctx.env.get("system.config").is_none());
-    }
-
-    #[test]
-    fn test_update_environment_overwrite() {
-        let ctx = FlowContext::new();
-        let _ = ctx.update_environment("session.user_id", json!("12345"));
-        let result = ctx.update_environment("session.user_id", json!("67890"));
-        assert!(result.is_ok());
-        assert_eq!(
-            ctx.env.get("session.user_id").map(|v| v.value().clone()),
-            Some(json!("67890"))
-        );
-    }
 
     #[test]
     fn test_node_context_next_nodes() {
