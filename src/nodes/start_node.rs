@@ -368,6 +368,7 @@ mod tests {
             flow_context: Arc::new(flow_ctx),
             event_bus: EventBus::new(10),
             resolved_data: node_data,
+            next_nodes: Arc::new(Vec::new()),
         }
     }
 

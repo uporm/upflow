@@ -466,6 +466,11 @@ async fn spawn_node_execution(
         .ok_or_else(|| WorkflowError::RuntimeError(format!("Node {} not found in map", node_id)))?;
     let node = &graph.dag[*node_idx];
     let node_type = node.node_type.clone();
+    let next_nodes = graph
+        .dag
+        .edges_directed(*node_idx, Direction::Outgoing)
+        .map(|edge| graph.dag[edge.target()].clone())
+        .collect::<Vec<_>>();
 
     // 解析输入参数
     let resolved_input = flow_context
@@ -487,6 +492,7 @@ async fn spawn_node_execution(
         flow_context: Arc::clone(&flow_context),
         event_bus: event_bus.clone(),
         resolved_data: Arc::clone(&resolved_data),
+        next_nodes: Arc::new(next_nodes),
     };
     event_bus.emit(WorkflowEvent::NodeStarted {
         node_id: node_id.clone(),

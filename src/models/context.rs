@@ -70,9 +70,18 @@ pub struct NodeContext {
     pub flow_context: Arc<FlowContext>,
     pub event_bus: EventBus,
     pub resolved_data: Arc<Value>,
+    pub next_nodes: Arc<Vec<Node>>,
 }
 
 impl NodeContext {
+    pub fn next_nodes(&self) -> Vec<Node> {
+        self.next_nodes.as_ref().clone()
+    }
+
+    pub fn next_node(&self) -> Option<Node> {
+        self.next_nodes.first().cloned()
+    }
+
     pub fn send_message(&self, message: impl Into<Value>) {
         self.event_bus.emit(WorkflowEvent::NodeMessage {
             node_id: self.node.id.clone(),
@@ -86,6 +95,8 @@ impl NodeContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::event_bus::EventBus;
+    use crate::models::workflow::Node;
     use serde_json::json;
 
     #[test]
@@ -117,5 +128,44 @@ mod tests {
             ctx.env.get("session.user_id").map(|v| v.value().clone()),
             Some(json!("67890"))
         );
+    }
+
+    #[test]
+    fn test_node_context_next_nodes() {
+        let current_node = Node {
+            id: "node-1".to_string(),
+            parent_id: None,
+            node_type: "task".to_string(),
+            data: Arc::new(json!({})),
+            retry_policy: None,
+        };
+        let next_node_a = Node {
+            id: "node-2".to_string(),
+            parent_id: None,
+            node_type: "task".to_string(),
+            data: Arc::new(json!({})),
+            retry_policy: None,
+        };
+        let next_node_b = Node {
+            id: "node-3".to_string(),
+            parent_id: None,
+            node_type: "task".to_string(),
+            data: Arc::new(json!({})),
+            retry_policy: None,
+        };
+        let ctx = NodeContext {
+            node: current_node,
+            flow_context: Arc::new(FlowContext::new()),
+            event_bus: EventBus::new(10),
+            resolved_data: Arc::new(json!({})),
+            next_nodes: Arc::new(vec![next_node_a.clone(), next_node_b.clone()]),
+        };
+        let next_ids = ctx
+            .next_nodes()
+            .into_iter()
+            .map(|node| node.id)
+            .collect::<Vec<_>>();
+        assert_eq!(next_ids, vec![next_node_a.id, next_node_b.id]);
+        assert_eq!(ctx.next_node().map(|node| node.id), Some("node-2".to_string()));
     }
 }

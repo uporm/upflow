@@ -144,6 +144,7 @@ mod tests {
             flow_context: Arc::new(FlowContext::new()),
             event_bus: EventBus::new(10),
             resolved_data: Arc::new(data.clone()),
+            next_nodes: Arc::new(Vec::new()),
         };
 
         let result = node_executor.execute(ctx).await.unwrap();
@@ -187,6 +188,7 @@ mod tests {
             flow_context: Arc::new(FlowContext::new()),
             event_bus: EventBus::new(10),
             resolved_data: Arc::new(data.clone()),
+            next_nodes: Arc::new(Vec::new()),
         };
 
         let result = node_executor.execute(ctx).await.unwrap();
