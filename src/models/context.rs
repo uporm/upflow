@@ -4,12 +4,13 @@ use crate::models::event_bus::EventBus;
 use crate::models::workflow::Node;
 use dashmap::DashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct FlowContext {
     pub payload: Value,
-    pub node_results: DashMap<String, Arc<Value>>,
+    pub results: DashMap<String, Arc<Value>>,
 }
 
 impl Default for FlowContext {
@@ -22,7 +23,7 @@ impl FlowContext {
     pub fn new() -> Self {
         Self {
             payload: Value::Null,
-            node_results: DashMap::new(),
+            results: DashMap::new(),
         }
     }
 
@@ -31,26 +32,59 @@ impl FlowContext {
         self
     }
 
-    pub fn with_vars(self, vars: impl IntoIterator<Item = (String, Value)>) -> Self {
+    pub fn with_vars(
+        self,
+        vars: impl IntoIterator<Item = (String, Value)>,
+    ) -> Result<Self, WorkflowError> {
         for (key, value) in vars {
-            self.node_results.insert(key, Arc::new(value));
+            validate_var_key(&key)?;
+            self.results.insert(key, Arc::new(value));
         }
-        self
+        Ok(self)
     }
 
-    pub fn set_result(&self, node_id: &str, output: Arc<Value>) {
-        self.node_results.insert(node_id.to_string(), output);
+    pub fn set_result(&self, key: &str, output: Arc<Value>) {
+        self.results.insert(key.to_string(), output);
     }
 
-    pub fn get_result(&self, node_id: &str) -> Option<Arc<Value>> {
-        self.node_results
-            .get(node_id)
+    pub fn get_result(&self, key: &str) -> Option<Arc<Value>> {
+        self.results
+            .get(key)
             .map(|v| Arc::clone(v.value()))
+    }
+    
+    pub fn get_results(&self) -> HashMap<String, Arc<Value>> {
+        self.results
+            .iter()
+            .map(|item| (item.key().clone(), Arc::clone(item.value())))
+            .collect()
     }
 
     pub fn resolve_value(&self, value: &Value) -> Result<Value, WorkflowError> {
         crate::utils::resolve_value(self, value)
     }
+}
+
+fn validate_var_key(key: &str) -> Result<(), WorkflowError> {
+    if key.contains('.') {
+        return Err(WorkflowError::ValidationError(format!(
+            "FlowContext variable key '{}' cannot contain '.'",
+            key
+        )));
+    }
+
+    if key
+        .chars()
+        .next()
+        .is_some_and(|first_char| first_char.is_ascii_digit())
+    {
+        return Err(WorkflowError::ValidationError(format!(
+            "FlowContext variable key '{}' cannot start with a digit",
+            key
+        )));
+    }
+
+    Ok(())
 }
 
 pub struct NodeContext {
@@ -124,5 +158,36 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(next_ids, vec![next_node_a.id, next_node_b.id]);
         assert_eq!(ctx.next_node().map(|node| node.id), Some("node-2".to_string()));
+    }
+
+    #[test]
+    fn test_with_vars_rejects_dot_key() {
+        let result = FlowContext::new().with_vars(vec![("user.name".to_string(), json!("Jason"))]);
+        match result {
+            Err(WorkflowError::ValidationError(message)) => {
+                assert!(message.contains("cannot contain '.'"))
+            }
+            _ => panic!("expected validation error"),
+        }
+    }
+
+    #[test]
+    fn test_with_vars_rejects_numeric_prefix_key() {
+        let result = FlowContext::new().with_vars(vec![("1name".to_string(), json!("Jason"))]);
+        match result {
+            Err(WorkflowError::ValidationError(message)) => {
+                assert!(message.contains("cannot start with a digit"))
+            }
+            _ => panic!("expected validation error"),
+        }
+    }
+
+    #[test]
+    fn test_with_vars_accepts_valid_key() {
+        let ctx = FlowContext::new()
+            .with_vars(vec![("user_name".to_string(), json!("Jason"))])
+            .unwrap();
+        let value = ctx.get_result("user_name").unwrap();
+        assert_eq!(value.as_ref(), &json!("Jason"));
     }
 }

@@ -134,14 +134,18 @@ mod tests {
 
     #[test]
     fn test_resolve_variable_placeholder() {
-        let ctx = FlowContext::new().with_vars(vec![("user_id".to_string(), json!("u-100"))]);
+        let ctx = FlowContext::new()
+            .with_vars(vec![("user_id".to_string(), json!("u-100"))])
+            .unwrap();
         let resolved = resolve_value(&ctx, &json!("{{user_id}}")).unwrap();
         assert_eq!(resolved, json!("u-100"));
     }
 
     #[test]
     fn test_resolve_variable_placeholder_in_string() {
-        let ctx = FlowContext::new().with_vars(vec![("name".to_string(), json!("Jason"))]);
+        let ctx = FlowContext::new()
+            .with_vars(vec![("name".to_string(), json!("Jason"))])
+            .unwrap();
         let resolved = resolve_value(&ctx, &json!("hello {{name}}")).unwrap();
         assert_eq!(resolved, json!("hello Jason"));
     }
