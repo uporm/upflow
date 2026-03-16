@@ -34,6 +34,7 @@ pub enum WorkflowEvent {
         message: Arc<Value>,
     },
     NodeError {
+        instance_id: String,
         node_id: String,
         node_type: String,
         data: Arc<Value>,

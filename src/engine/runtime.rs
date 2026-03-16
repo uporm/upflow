@@ -551,7 +551,7 @@ async fn run_executor(
             let duration = start.elapsed().as_millis() as u64;
             let output = Arc::new(output);
             event_bus.emit(WorkflowEvent::NodeCompleted {
-                instance_id,
+                instance_id: instance_id.clone(),
                 node_id: node_id.clone(),
                 node_type: node_type.clone(),
                 data: Arc::clone(&node_data),
@@ -564,6 +564,7 @@ async fn run_executor(
         }
         Err(e) => {
             event_bus.emit(WorkflowEvent::NodeError {
+                instance_id,
                 node_id: node_id.clone(),
                 node_type: node_type.clone(),
                 data: Arc::clone(&node_data),
