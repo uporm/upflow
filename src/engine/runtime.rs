@@ -217,6 +217,7 @@ impl WorkflowActor {
             } else {
                 // 如果处理消息时发生错误，发送失败事件并返回错误
                 self.event_bus.emit(WorkflowEvent::FlowFinished {
+                    instance_id: self.instance_id.to_string(),
                     output: None,
                     duration_ms,
                 });
@@ -247,6 +248,7 @@ impl WorkflowActor {
         // 发送工作流完成事件，通知监听者工作流已成功结束
         let duration_ms = start_time.elapsed().as_millis() as u64;
         self.event_bus.emit(WorkflowEvent::FlowFinished {
+            instance_id: self.instance_id.to_string(),
             output: output.clone(),
             duration_ms,
         });

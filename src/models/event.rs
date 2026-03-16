@@ -42,6 +42,7 @@ pub enum WorkflowEvent {
         timestamp: DateTime<Utc>,
     },
     FlowFinished {
+        instance_id: String,
         output: Option<Arc<Value>>,
         duration_ms: u64,
     },
