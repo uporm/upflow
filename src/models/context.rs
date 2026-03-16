@@ -88,6 +88,7 @@ fn validate_var_key(key: &str) -> Result<(), WorkflowError> {
 }
 
 pub struct NodeContext {
+    pub instance_id: String,
     pub node: Node,
     pub flow_context: Arc<FlowContext>,
     pub event_bus: EventBus,
@@ -106,6 +107,7 @@ impl NodeContext {
 
     pub fn send_message(&self, message: impl Into<Value>) {
         self.event_bus.emit(WorkflowEvent::NodeMessage {
+            instance_id: self.instance_id.clone(),
             node_id: self.node.id.clone(),
             node_type: self.node.node_type.clone(),
             data: Arc::clone(&self.resolved_data),
@@ -145,6 +147,7 @@ mod tests {
             retry_policy: None,
         };
         let ctx = NodeContext {
+            instance_id: "test-instance".to_string(),
             node: current_node,
             flow_context: Arc::new(FlowContext::new()),
             event_bus: EventBus::new(10),

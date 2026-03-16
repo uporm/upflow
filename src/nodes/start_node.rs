@@ -358,6 +358,7 @@ mod tests {
         let flow_ctx = FlowContext::new().with_payload(payload);
         let node_data = Arc::new(node_data);
         NodeContext {
+            instance_id: "test-instance".to_string(),
             node: Node {
                 id: "start".to_string(),
                 parent_id: None,

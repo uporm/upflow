@@ -306,6 +306,7 @@ impl WorkflowActor {
                     // 处理执行消息，启动指定节点的执行
                     let node_id_for_error = node_id.clone();
                     spawn_node_execution(
+                        self.instance_id.to_string(),
                         node_id,
                         self.graph.clone(),
                         self.executors.clone(),
@@ -454,6 +455,7 @@ impl WorkflowActor {
 }
 
 async fn spawn_node_execution(
+    instance_id: String,
     node_id: String,
     graph: Arc<WorkflowGraph>,
     executors: Arc<DashMap<String, Arc<dyn NodeExecutor>>>,
@@ -490,6 +492,7 @@ async fn spawn_node_execution(
         })?;
 
     let ctx = NodeContext {
+        instance_id: instance_id.clone(),
         node: node.clone(),
         flow_context: Arc::clone(&flow_context),
         event_bus: event_bus.clone(),
@@ -497,6 +500,7 @@ async fn spawn_node_execution(
         next_nodes: Arc::new(next_nodes),
     };
     event_bus.emit(WorkflowEvent::NodeStarted {
+        instance_id: instance_id.clone(),
         node_id: node_id.clone(),
         node_type: node_type.clone(),
         data: Arc::clone(&resolved_data),
@@ -506,6 +510,7 @@ async fn spawn_node_execution(
 
     if spawn {
         tokio::spawn(run_executor(
+            instance_id,
             executor,
             ctx,
             node_id,
@@ -516,6 +521,7 @@ async fn spawn_node_execution(
         ));
     } else {
         run_executor(
+            instance_id,
             executor,
             ctx,
             node_id,
@@ -530,6 +536,7 @@ async fn spawn_node_execution(
 }
 
 async fn run_executor(
+    instance_id: String,
     executor: Arc<dyn NodeExecutor>,
     ctx: NodeContext,
     node_id: String,
@@ -544,6 +551,7 @@ async fn run_executor(
             let duration = start.elapsed().as_millis() as u64;
             let output = Arc::new(output);
             event_bus.emit(WorkflowEvent::NodeCompleted {
+                instance_id,
                 node_id: node_id.clone(),
                 node_type: node_type.clone(),
                 data: Arc::clone(&node_data),

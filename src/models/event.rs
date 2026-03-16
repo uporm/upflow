@@ -13,11 +13,13 @@ pub enum WorkflowEvent {
         timestamp: DateTime<Utc>,
     },
     NodeStarted {
+        instance_id: String,
         node_id: String,
         node_type: String,
         data: Arc<Value>,
     },
     NodeCompleted {
+        instance_id: String,
         node_id: String,
         node_type: String,
         data: Arc<Value>,
@@ -25,6 +27,7 @@ pub enum WorkflowEvent {
         duration_ms: u64,
     },
     NodeMessage {
+        instance_id: String,
         node_id: String,
         node_type: String,
         data: Arc<Value>,

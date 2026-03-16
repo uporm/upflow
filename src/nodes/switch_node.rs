@@ -140,6 +140,7 @@ mod tests {
         };
 
         let ctx = NodeContext {
+            instance_id: "test-instance".to_string(),
             node,
             flow_context: Arc::new(FlowContext::new()),
             event_bus: EventBus::new(10),
@@ -184,6 +185,7 @@ mod tests {
         };
 
         let ctx = NodeContext {
+            instance_id: "test-instance".to_string(),
             node,
             flow_context: Arc::new(FlowContext::new()),
             event_bus: EventBus::new(10),
