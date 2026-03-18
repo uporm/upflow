@@ -73,16 +73,16 @@ impl WorkflowGraph {
         }
 
         // 计算结束节点数量（没有出边的节点）
-        let end_node_count = self.count_nodes_without_edges(Direction::Outgoing);
+        // let end_node_count = self.count_nodes_without_edges(Direction::Outgoing);
 
         // 如果图不为空但终点节点数量不是1个，则返回错误
         // 工作流必须有且仅有一个终点
-        if self.dag.node_count() > 0 && end_node_count != 1 {
-            return Err(WorkflowError::InvalidGraph(format!(
-                "Workflow contains invalid end nodes count: {}",
-                end_node_count
-            )));
-        }
+        // if self.dag.node_count() > 0 && end_node_count != 1 {
+        //     return Err(WorkflowError::InvalidGraph(format!(
+        //         "Workflow contains invalid end nodes count: {}",
+        //         end_node_count
+        //     )));
+        // }
 
         let order = toposort(&self.dag, None).map_err(|_| {
             WorkflowError::InvalidGraph("Workflow contains cycle detected".to_string())
